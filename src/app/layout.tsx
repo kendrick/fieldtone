@@ -16,7 +16,7 @@ export default function RootLayout({ children }: RootLayoutProps): ReactElement 
 	return (
 		<html lang="en">
 			{/* text-base is pinned here per the constitution's 16px minimum body text requirement */}
-			<body className="min-h-dvh bg-zinc-950 text-base text-zinc-50 antialiased">
+			<body className="min-h-dvh bg-background text-base text-foreground antialiased">
 				{children}
 			</body>
 		</html>

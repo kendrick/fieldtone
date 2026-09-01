@@ -1,1 +1,15 @@
 @import 'tailwindcss';
+
+/* Roles, not palette entries. components.json already commits this repo to
+   shadcn's token vocabulary, so the shell names what a color is for and lets
+   the value live in one place. `@theme inline` is what lets these resolve
+   against another custom property rather than being frozen at build time. */
+:root {
+	--background: var(--color-zinc-950);
+	--foreground: var(--color-zinc-50);
+}
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+}
