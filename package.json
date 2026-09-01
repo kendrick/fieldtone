@@ -17,7 +17,7 @@
 		"lint:css:fix": "stylelint \"**/*.css\" --fix --allow-empty-input",
 		"lint:fix": "eslint . --fix",
 		"prepare": "husky",
-		"test": "echo \"Error: no test specified\" && exit 1",
+		"test": "vitest run --passWithNoTests",
 		"test:e2e": "playwright test",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit"
@@ -47,5 +47,6 @@
 		"tailwindcss": "4.3.3",
 		"typescript": "5.9.3",
 		"vitest": "4.1.11"
-	}
+	},
+	"overrides": { "eslint-plugin-jsx-a11y": { "eslint": "$eslint" } }
 }
