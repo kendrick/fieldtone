@@ -69,6 +69,15 @@ export default antfu(
 		},
 	},
 	{
+		// `next dev` rewrites a managed block into AGENTS.md on every run, and the
+		// block opens with its own H1. Next owns that heading, so leaving the rule on
+		// would fail a file nobody here can fix; see generate-agent-files.js.
+		files: ['AGENTS.md'],
+		rules: {
+			'markdown/no-multiple-h1': 'off',
+		},
+	},
+	{
 		plugins: {
 			'jsx-a11y': jsxA11y,
 		},
