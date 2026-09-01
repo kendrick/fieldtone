@@ -1,21 +1,28 @@
 <!--
   Sync Impact Report
-  Version change: 1.0.0 → 1.0.1 (PATCH: clarification, no principle changed)
-  Modified principles: none
-  Modified sections:
-    - Preamble: corrected the precedence direction. It stated that
-      higher-numbered principles take precedence, which contradicted
-      Governance ("resolve by priority order (I highest)") and the
-      ordering the principles are written in. Principle I is highest.
-  Added sections: none
+  Version change: 1.0.1 → 1.1.0 (MINOR)
+  Modified principles:
+    - I. Privacy & Security: struck the motion sensor clause (moved to
+      ADR 0003, deferred to v2); added a bounded in-memory audio buffer
+      exception, capped at 10 seconds, never stored or transmitted
+    - IV. Technology Stack: resolved TODO(WEB_AUDIO_LIBRARY) to Tone.js
+      (ADR 0001); named WebGL as the visual layer (ADR 0002)
+    - V. Performance & Battery Efficiency: replaced the 60 fps mandate
+      with an adaptive render-resolution budget held against the
+      thermal requirement (ADR 0002)
+  Added sections:
+    - Governance: threshold carve-out for numeric metric changes
   Removed sections: none
+  Version rationale: the buffer exception clarifies Principle I's
+    existing intent rather than changing it, and the motion clause
+    governed a feature that does not exist, so neither is a
+    redefinition under Governance. If you read the buffer exception as
+    narrowing a NON-NEGOTIABLE prohibition, this is a 2.0.0 instead.
   Templates requiring updates:
     - plan-template.md ✅ no change needed (Constitution Check is dynamic)
     - spec-template.md ✅ no change needed
     - tasks-template.md ✅ no change needed
-  Follow-up TODOs:
-    - TODO(WEB_AUDIO_LIBRARY): library selection still deferred to the
-      planning phase (Principle IV)
+  Follow-up TODOs: none
 -->
 
 # FieldTone Constitution
@@ -32,9 +39,10 @@ Principle I outranks every other.
 - ALL audio processing MUST happen client-side only
 - NO audio data may be transmitted to any server or external service
 - NO audio recording or persistent storage of raw audio data
-- Motion sensor data (accelerometer, gyroscope) MUST NOT be
-  transmitted off-device; access MUST be gated behind an explicit
-  user permission prompt
+- Raw audio MAY be held in a bounded in-memory buffer of at most
+  10 seconds, which real-time processing requires. That buffer
+  MUST NOT be written to storage, MUST NOT outlive the audio
+  session, and MUST NOT be transmitted
 - Security headers and Content Security Policy MUST follow OWASP
   recommendations for static web apps
 
@@ -63,10 +71,9 @@ Principle I outranks every other.
 - **State Management**: Zustand for all non-trivial shared state
   (audio graph state, scene parameters, UI state); local
   `useState` is acceptable for component-scoped ephemeral state
-- **Web Audio**: TODO(WEB_AUDIO_LIBRARY): Library selection deferred
-  to planning phase. MUST be modern, actively maintained, and
-  production-ready. Candidates will be evaluated during feature
-  planning.
+- **Web Audio**: Tone.js, with analysis running in a raw
+  AudioWorklet (see ADR 0001)
+- **Visuals**: WebGL fragment shaders (see ADR 0002)
 
 ### V. Performance & Battery Efficiency
 
@@ -75,8 +82,12 @@ Principle I outranks every other.
   on a mid-range mobile device during steady-state playback.
 - Devices MUST NOT feel appreciably hot during extended sessions
   (> 30 minutes continuous use)
-- UI animations MUST target 60 fps; audio processing latency
-  SHOULD stay under 20 ms
+- UI animation MUST stay smooth; audio processing latency SHOULD
+  stay under 20 ms
+- Render resolution, not frame rate, is the adaptive lever. The
+  visual layer renders at a fraction of device resolution and
+  upscales, and that fraction MUST adapt to hold the thermal
+  requirement above (see ADR 0002)
 - Use Page Visibility API to suspend or reduce processing when
   the app is backgrounded
 - Optimize for efficiency but do not over-engineer
@@ -154,6 +165,10 @@ Principle I outranks every other.
 - **Versioning**: this constitution follows semantic versioning.
   MAJOR = principle removal or redefinition; MINOR = new principle
   or material expansion; PATCH = wording, typos, clarifications.
+- **Threshold carve-out**: changing a numeric threshold or metric
+  inside a principle is MINOR, provided the principle's intent is
+  unchanged. Without this, tuning a number costs a major version
+  and the constitution stops getting amended.
 - When principles conflict, resolve by priority order (I highest).
 
-**Version**: 1.0.1 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-09-01
+**Version**: 1.1.0 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-09-01
