@@ -11,12 +11,17 @@ export default defineConfig({
 		trace: 'on-first-retry',
 	},
 	webServer: {
-		command: 'pnpm dev',
+		// Serve the static export rather than the dev server. The export is what
+		// actually ships, so e2e tests must exercise it—dev behaves differently.
+		// Requires pnpm build to have run first; a stale or missing out/ otherwise
+		// gives a misleading test result.
+		command: 'pnpm preview',
 		port: 3000,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
 	},
-	// Mobile-first matrix. Desktop included for parity but not run by default in CI.
+	// Mobile-first matrix. CI passes explicit --project flags to run only
+	// Chromium-based projects; WebKit and Firefox are local checks.
 	projects: [
 		{ name: 'mobile-chrome', use: { ...devices['Pixel 5'] } },
 		{ name: 'mobile-safari', use: { ...devices['iPhone 14'] } },
