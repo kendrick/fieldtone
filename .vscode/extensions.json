@@ -1,0 +1,10 @@
+{
+	"recommendations": [
+		"bradlc.vscode-tailwindcss",
+		"dbaeumer.vscode-eslint",
+		"editorconfig.editorconfig",
+		"ms-playwright.playwright",
+		"stylelint.vscode-stylelint",
+		"vitest.explorer"
+	]
+}

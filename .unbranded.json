@@ -1,0 +1,148 @@
+{
+	"_tool": "unbranded manages the files below. Run `unbranded diff` to see your local drift or `unbranded doctor` to audit the repo; https://github.com/kendrick/unbranded-starter",
+	"attribution": {
+		".editorconfig": "core-editorconfig",
+		".gitattributes": "core-gitattributes",
+		".github/workflows/ci.yml": "opt-ci-github",
+		".husky/pre-commit": "opt-husky",
+		".vscode/extensions.json": "opt-vscode",
+		".vscode/settings.json": "opt-vscode",
+		"components.json": "opt-shadcn",
+		"eslint.config.mjs": "core-eslint",
+		"lint-staged.config.mjs": "opt-husky",
+		"playwright.config.ts": "opt-playwright",
+		"postcss.config.mjs": "core-postcss",
+		"src/lib/utils.ts": "opt-shadcn",
+		"stylelint.config.mjs": "core-stylelint",
+		"tsconfig.base.json": "core-typescript",
+		"tsconfig.json": "core-typescript",
+		"vitest.config.ts": "core-vitest"
+	},
+	"files": {
+		".editorconfig": "682978c2757a1250094bd618e3029c3a1d666216f8b95003bfcc26c3cbb658cd",
+		".gitattributes": "3fbffcfa4fa86929169db1a45cea5114178be460d98d3326e6263669503dbaf9",
+		".github/workflows/ci.yml": "99f8bc9daa5d310be0f7d2e20ecc1eb3939d3e7b0677a3caf7298e167d0cb37d",
+		".husky/pre-commit": "aad3507759b5b03c40f17cb27ca0e2203edebcd8820c48addadc16104b1e011c",
+		".vscode/extensions.json": "926e0ce07419df90007f8d0c9538d1f25d98830ae8b919ae4f7e3bb68a521b36",
+		".vscode/settings.json": "68f4ef8e636daaf44262f89fdf5be0d876a1565aa376b697611743607b06b974",
+		"components.json": "b302ac588e54cb7c527033d01cdf595406f1e8203239f74598cab3e6e083624e",
+		"eslint.config.mjs": "72e19b82b22d8864581fa16280b44587b9803e3e078fa240637326bcdd0c84a8",
+		"lint-staged.config.mjs": "4a767ab49b445df567f4f5a352ae13b8bd3cdc727996ace47b8a445d10ac49cd",
+		"playwright.config.ts": "e29e81f1f0ed5d293b53b91027313f56b4a2456ad0a052b7103523eb3b5dc3f0",
+		"postcss.config.mjs": "8a5dbe36e0d27e7d8a842448d1647cf2d0b818eedde29d4610fb2f0bc14856bf",
+		"src/lib/utils.ts": "b4067353c8bb88f113a6825095bde1bd30850852dca8b09d8acc6ddf58d8dd87",
+		"stylelint.config.mjs": "9d8c86e19a9d4cb9928ba99d9a6ca4500d56953add63e411561fd9f4ffd2b4a2",
+		"tsconfig.base.json": "4a8ac701588b14ffabfc89ca20f99000c9f4d93c7bebc228f08a3253deab3a56",
+		"tsconfig.json": "3a9740ae9b6503149676c88f08f31191249235ae56ea1ed90ceb952a135bd3cf",
+		"vitest.config.ts": "7ce103239f55d8f7287f446035e83eec89f84ba20c5cad7feee397f3e1f28887"
+	},
+	"modes": {
+		".editorconfig": "copy",
+		".gitattributes": "copy",
+		".github/workflows/ci.yml": "copy",
+		".husky/pre-commit": "copy",
+		".vscode/extensions.json": "computed",
+		".vscode/settings.json": "merge-json",
+		"components.json": "copy",
+		"eslint.config.mjs": "copy",
+		"lint-staged.config.mjs": "copy",
+		"playwright.config.ts": "copy",
+		"postcss.config.mjs": "copy",
+		"src/lib/utils.ts": "copy",
+		"stylelint.config.mjs": "copy",
+		"tsconfig.base.json": "copy",
+		"tsconfig.json": "copy",
+		"vitest.config.ts": "copy"
+	},
+	"options": {
+		"eslintFlavor": "next"
+	},
+	"schema": 3,
+	"units": [
+		{
+			"id": "core-editorconfig",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-eslint",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-gitattributes",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-node-version",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-postcss",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-stylelint",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-tailwind",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-typescript",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "core-vitest",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "opt-ci-github",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "opt-husky",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "opt-playwright",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "opt-shadcn",
+			"source": {
+				"kind": "builtin"
+			}
+		},
+		{
+			"id": "opt-vscode",
+			"source": {
+				"kind": "builtin"
+			}
+		}
+	],
+	"version": "2.0.2"
+}
