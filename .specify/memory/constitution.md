@@ -1,35 +1,29 @@
 <!--
   Sync Impact Report
-  Version change: none → 1.0.0 (initial ratification)
-  Principles (ordered by priority):
-    1. Privacy & Security (NON-NEGOTIABLE)
-    2. Accessibility (NON-NEGOTIABLE)
-    3. TypeScript Standards (NON-NEGOTIABLE)
-    4. Technology Stack (NON-NEGOTIABLE)
-    5. State Management
-    6. Performance & Battery Efficiency
-    7. Browser Compatibility
-    8. Progressive Web App
-    9. Testing Strategy
-    10. Code Quality
-    11. Deployment
-    12. Development Experience
-  Added sections: State Management, Progressive Web App, Motion/Sensor Policy (within Privacy)
+  Version change: 1.0.0 → 1.0.1 (PATCH: clarification, no principle changed)
+  Modified principles: none
+  Modified sections:
+    - Preamble: corrected the precedence direction. It stated that
+      higher-numbered principles take precedence, which contradicted
+      Governance ("resolve by priority order (I highest)") and the
+      ordering the principles are written in. Principle I is highest.
+  Added sections: none
   Removed sections: none
   Templates requiring updates:
-    - plan-template.md ✅ no conflicts (Constitution Check is dynamic)
-    - spec-template.md ✅ no conflicts
-    - tasks-template.md ✅ no conflicts
+    - plan-template.md ✅ no change needed (Constitution Check is dynamic)
+    - spec-template.md ✅ no change needed
+    - tasks-template.md ✅ no change needed
   Follow-up TODOs:
-    - Web Audio library selection (deferred to planning phase)
+    - TODO(WEB_AUDIO_LIBRARY): library selection still deferred to the
+      planning phase (Principle IV)
 -->
 
 # FieldTone Constitution
 
 FieldTone is a progressive web app that transforms ambient sound
 into reactive soundscapes. All principles below are ordered by
-priority; when principles conflict, higher-numbered principles
-take precedence over lower-numbered ones.
+priority. When two principles conflict, the one listed first wins;
+Principle I outranks every other.
 
 ## Core Principles
 
@@ -162,4 +156,4 @@ take precedence over lower-numbered ones.
   or material expansion; PATCH = wording, typos, clarifications.
 - When principles conflict, resolve by priority order (I highest).
 
-**Version**: 1.0.0 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-04-08
+**Version**: 1.0.1 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-09-01
