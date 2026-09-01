@@ -50,6 +50,16 @@ export default antfu(
 			'storybook-static',
 			'**/components/ui',
 			'*.min.*',
+			// Vendored and generated files nothing here owns. spec-kit rewrites
+			// .specify/ and .claude/commands/ on upgrade, npm rewrites the lockfile,
+			// and .unbranded/baseline/ has to stay byte-identical to what the
+			// scaffold wrote or `unbranded update` loses its merge base. Formatting
+			// any of them means re-fighting the same diff, and lint-staged would do
+			// it on every commit.
+			'.specify',
+			'.claude/commands',
+			'.unbranded/baseline',
+			'**/package-lock.json',
 		],
 	},
 	{
