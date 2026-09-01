@@ -1,11 +1,11 @@
 # Trimmed from the unbranded repo's own workflow: dropped its OS/Node matrix and
-# the create-unbranded smoke step, which are CLI-internal. This runs the four
-# scripts opt-ci-github's units provide (install, lint, typecheck, test) on a
-# single current-LTS leg — enough signal for a scaffold, cheap to run.
+# the create-unbranded smoke step, which are CLI-internal. This runs the three
+# scripts opt-ci-github's units provide (lint, typecheck, test) on a single leg,
+# which is enough signal for a scaffold and cheap to run.
 #
-# pnpm is the shipped default because the copy layer ships static files only; a
-# package-manager-aware workflow would need a computed write like extensions.json,
-# which is out of scope here. Swap the pnpm steps for your PM if you use another.
+# The template ships pnpm steps by default. This repo is on npm, so the install
+# steps below diverge from the scaffold on purpose; `unbranded diff` will report
+# the drift and `unbranded update` will treat it as a local edit to merge.
 name: CI
 
 on:
@@ -19,23 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No version pin here: pnpm/action-setup reads it from package.json's
-      # packageManager field, which core-node-version writes for you.
-      - uses: pnpm/action-setup@v4
-
+      # node-version-file reads .nvmrc, so the runtime under test can't drift
+      # from the one developers get locally.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
+          node-version-file: .nvmrc
+          cache: npm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Lint
-        run: pnpm lint
+        run: npm run lint
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: npm run typecheck
 
       - name: Test
-        run: pnpm test
+        run: npm test

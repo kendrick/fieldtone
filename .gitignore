@@ -119,8 +119,8 @@ Thumbs.db
 *.temp
 *.cache
 
-# Lock files (keep pnpm-lock.yaml but ignore others)
-package-lock.json
+# Lock files (this repo is on npm, so package-lock.json is tracked)
+pnpm-lock.yaml
 yarn.lock
 
 # ============================================
