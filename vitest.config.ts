@@ -12,6 +12,14 @@ export default defineConfig({
 		// setupFiles: ['./tests/setup.ts'],
 	},
 	resolve: {
-		alias: { '@': path.resolve(__dirname, '.') },
+		// Must match the '@/*' -> './src/*' mapping in tsconfig.json and the
+		// aliases in components.json, or the same import specifier resolves
+		// to two different places in tests versus the app.
+		alias: { '@': path.resolve(import.meta.dirname, './src') },
 	},
+	// tsconfig sets jsx: "preserve" so Next's compiler handles JSX. Vitest 4
+	// runs on Vite 8, which uses Oxc and would otherwise inherit "preserve"
+	// and fail to compile JSX in spec files — this override is what lets
+	// .tsx specs run.
+	oxc: { jsx: { runtime: 'automatic' } },
 });

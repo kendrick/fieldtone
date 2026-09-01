@@ -20,7 +20,7 @@
 		"lint:fix": "eslint . --fix",
 		"prepare": "husky",
 		"preview": "serve out --listen 3000 --no-clipboard",
-		"test": "vitest run --passWithNoTests",
+		"test": "vitest run",
 		"test:e2e": "playwright test",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit"
