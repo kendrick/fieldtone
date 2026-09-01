@@ -2,7 +2,7 @@
 	"name": "fieldtone",
 	"type": "commonjs",
 	"version": "0.1.0",
-	"packageManager": "npm@11.16.0",
+	"packageManager": "pnpm@11.25.0",
 	"description": "",
 	"author": "",
 	"license": "ISC",
@@ -47,6 +47,5 @@
 		"tailwindcss": "4.3.3",
 		"typescript": "5.9.3",
 		"vitest": "4.1.11"
-	},
-	"overrides": { "eslint-plugin-jsx-a11y": { "eslint": "$eslint" } }
+	}
 }

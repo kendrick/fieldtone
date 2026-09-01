@@ -51,7 +51,7 @@ export default antfu(
 			'**/components/ui',
 			'*.min.*',
 			// Vendored and generated files nothing here owns. spec-kit rewrites
-			// .specify/ and .claude/commands/ on upgrade, npm rewrites the lockfile,
+			// .specify/ and .claude/commands/ on upgrade, pnpm rewrites the lockfile,
 			// and .unbranded/baseline/ has to stay byte-identical to what the
 			// scaffold wrote or `unbranded update` loses its merge base. Formatting
 			// any of them means re-fighting the same diff, and lint-staged would do
@@ -59,7 +59,7 @@ export default antfu(
 			'.specify',
 			'.claude/commands',
 			'.unbranded/baseline',
-			'**/package-lock.json',
+			'**/pnpm-lock.yaml',
 		],
 	},
 	{

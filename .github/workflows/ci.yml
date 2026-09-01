@@ -3,9 +3,9 @@
 # scripts opt-ci-github's units provide (lint, typecheck, test) on a single leg,
 # which is enough signal for a scaffold and cheap to run.
 #
-# The template ships pnpm steps by default. This repo is on npm, so the install
-# steps below diverge from the scaffold on purpose; `unbranded diff` will report
-# the drift and `unbranded update` will treat it as a local edit to merge.
+# This workflow departs from the scaffold in one place. It reads the Node version
+# from .nvmrc instead of a pin, so `unbranded diff` reports drift here and
+# `unbranded update` merges the difference as a local edit.
 name: CI
 
 on:
@@ -19,21 +19,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm/action-setup needs no version pin, because it reads the version from
+      # package.json's packageManager field. Keep this step ahead of setup-node,
+      # which cannot enable `cache: pnpm` until a pnpm binary exists on the runner.
+      - uses: pnpm/action-setup@v4
+
       # node-version-file reads .nvmrc, so the runtime under test can't drift
       # from the one developers get locally.
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: npm run lint
+        run: pnpm lint
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm typecheck
 
       - name: Test
-        run: npm test
+        run: pnpm test
