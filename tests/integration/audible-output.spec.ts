@@ -14,6 +14,10 @@ function renderBedRms(): Promise<number> {
 	return window.__fieldtone?.renderBedRms() ?? Promise.resolve(0);
 }
 
+function renderBedFingerprint(): Promise<number[]> {
+	return window.__fieldtone?.renderBedFingerprint() ?? Promise.resolve([]);
+}
+
 async function isRealtimeAudioAvailable(): Promise<boolean> {
 	const before = window.__fieldtone?.readContextTime() ?? 0;
 	await new Promise((resolve) => {
@@ -34,6 +38,27 @@ test.describe('audible output', () => {
 		// on a laptop and on a CI runner. It drives the very graph playback uses,
 		// so a silent bug shows up here even where nothing can be heard.
 		expect(await page.evaluate(renderBedRms)).toBeGreaterThan(AUDIBLE_THRESHOLD);
+	});
+
+	test('two renders of the bed do not come back identical', async ({ page }): Promise<void> => {
+		await page.goto('/');
+		await page.getByRole('button', { name: 'Play' }).click();
+		await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
+
+		// Awaited one at a time, never Promise.all: Tone.Offline swaps the global
+		// context around an awaited callback, and two renders in flight at once
+		// would stomp on each other's context.
+		//
+		// This is a smoke check, not proof the Bed is generative. Ember's Bed
+		// redraws its voicing with drawVoicing(Math.random) on every render, but
+		// even a fixed voicing would still differ here, because the reverb's noise
+		// burst is randomly offset on each render regardless. So a match would be
+		// a real red flag, but a difference only shows the Bed isn't a frozen
+		// recording—proving the voicing itself varies is Ember's voicing spec's
+		// job, not this one's.
+		const first = await page.evaluate(renderBedFingerprint);
+		const second = await page.evaluate(renderBedFingerprint);
+		expect(second).not.toEqual(first);
 	});
 
 	test('play makes sound, stop silences it, and play works again', async ({ page }): Promise<void> => {
