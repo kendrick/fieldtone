@@ -318,3 +318,68 @@ describe('scene runtime parameters', (): void => {
 		]);
 	});
 });
+
+// The runtime, not the component layer, owns the encode/decode call into
+// parameter-serialization.ts: routing a decoded value through setParameter is
+// what keeps the clamp and the forward-only-while-playing rule in the one place
+// ADR 0004 argues for, so these cases exist to prove apply never bypasses it.
+describe('scene runtime parameter links', (): void => {
+	it('serializes the values at rest, then a change made after', (): void => {
+		const runtime = createSceneRuntime(createRecordingBackend(), createTunableScene());
+
+		expect(runtime.serializeParameters()).toBe('level=0.5');
+
+		runtime.setParameter('level', 0.2);
+
+		expect(runtime.serializeParameters()).toBe('level=0.2');
+	});
+
+	it('applies a link while playing by forwarding one setParameter per schema entry, clamped', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createTunableScene());
+
+		await runtime.start();
+		const result = runtime.applySerializedParameters('level=4');
+
+		expect(result).toEqual({ level: 1 });
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'setParameter', name: 'level', value: 1 }]);
+		expect(runtime.store.getState().parameters).toEqual({ level: 1 });
+	});
+
+	it('applies a link while idle by carrying the value into the next start, not the backend yet', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createTunableScene());
+
+		const result = runtime.applySerializedParameters('level=0.3');
+
+		expect(result).toEqual({ level: 0.3 });
+		expect(backend.commands).toEqual([]);
+
+		await runtime.start();
+
+		expect(backend.commands).toEqual([
+			{ kind: 'resume' },
+			{ kind: 'start', scene: 'silent', parameters: { level: 0.3 } },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
+	});
+
+	it('falls back to the default for an unknown key and a malformed value, and leaves playback untouched', (): void => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createTunableScene());
+
+		const result = runtime.applySerializedParameters('level=not-a-number&reverb=0.4');
+
+		expect(result).toEqual({ level: 0.5 });
+		expect(runtime.getState()).toEqual({ status: 'idle' });
+		expect(backend.commands).toEqual([]);
+	});
+
+	it('clamps an out-of-range value from the query string to the schema bound', (): void => {
+		const runtime = createSceneRuntime(createRecordingBackend(), createTunableScene());
+
+		const result = runtime.applySerializedParameters('level=4');
+
+		expect(result).toEqual({ level: 1 });
+	});
+});

@@ -12,9 +12,10 @@ export interface NumberParameter {
 	readonly default: number;
 }
 
-// A union of one today. #7 widens it, and every `switch (declaration.kind)`
-// downstream then fails the build until it grows a branch for the new member,
-// which is the point of declaring it as a union this early.
+// A union of one today. The `switch (declaration.kind)` in
+// parameter-serialization.ts is the build-time tripwire: a second member
+// fails the build there until the codec grows a branch for it, which is the
+// point of declaring it as a union this early.
 export type ParameterDeclaration = NumberParameter;
 
 export type ParameterSchema = Readonly<Record<string, ParameterDeclaration>>;
