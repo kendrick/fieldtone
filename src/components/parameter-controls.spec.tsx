@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRecordingBackend } from '@/audio/recording-backend';
 import { createSceneRuntime } from '@/audio/scene-runtime';
@@ -21,6 +21,14 @@ vi.mock('@/audio/runtime', async () => {
 });
 
 describe('parameter-controls', () => {
+	// Every URL-round-trip case below leaves a query string on jsdom's shared
+	// location. Resetting it here, rather than trusting the next test to
+	// overwrite what it cares about, is what keeps one test's leftover
+	// `?space=` out of another's assertions.
+	afterEach(() => {
+		window.history.replaceState(null, '', '/');
+	});
+
 	it('renders one labelled slider per schema entry', () => {
 		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
 		render(<ParameterControls runtime={runtime} />);
@@ -44,5 +52,53 @@ describe('parameter-controls', () => {
 		const { container } = render(<ParameterControls runtime={runtime} />);
 
 		expect(container.firstChild).toBeNull();
+	});
+
+	it('applies a search string present on load to the store', () => {
+		window.history.replaceState(null, '', '/?space=0.6');
+		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
+		render(<ParameterControls runtime={runtime} />);
+
+		expect(runtime.store.getState().parameters.space).toBe(0.6);
+	});
+
+	it('falls back to defaults for a malformed search without throwing', () => {
+		window.history.replaceState(null, '', '/?space=banana&bogus=1');
+		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
+
+		expect(() => render(<ParameterControls runtime={runtime} />)).not.toThrow();
+		expect(runtime.store.getState().parameters.space).toBe(emberParameters.space.default);
+	});
+
+	it('mirrors a committed change to the address bar for every declared parameter', async () => {
+		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
+		render(<ParameterControls runtime={runtime} />);
+
+		const brightness = screen.getByRole('slider', { name: 'Brightness' });
+		// fireEvent.change dispatches a real bubbling `change` event, which is
+		// what the fieldset's delegated listener is waiting for.
+		fireEvent.change(brightness, { target: { value: '2' } });
+		// The listener defers its read a microtask past the native dispatch—see
+		// the comment on handleChange—so the assertion has to wait one too.
+		await Promise.resolve();
+
+		expect(window.location.search).toContain('brightness=2');
+		// Proves every declared parameter gets written on commit, not only the
+		// one the listener moved.
+		expect(window.location.search).toContain('space=');
+	});
+
+	it('preserves a foreign query key, the pathname, and the hash across a commit', async () => {
+		window.history.replaceState(null, '', '/some/path?scene=x#top');
+		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
+		render(<ParameterControls runtime={runtime} />);
+
+		const brightness = screen.getByRole('slider', { name: 'Brightness' });
+		fireEvent.change(brightness, { target: { value: '2' } });
+		await Promise.resolve();
+
+		expect(window.location.search).toContain('scene=x');
+		expect(window.location.pathname).toBe('/some/path');
+		expect(window.location.hash).toBe('#top');
 	});
 });

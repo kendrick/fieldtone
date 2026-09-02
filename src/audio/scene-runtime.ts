@@ -8,6 +8,7 @@ import type { ParameterSchema, ParameterValues } from '@/scenes/parameters';
 import type { Scene } from '@/scenes/scene';
 import { createStore } from 'zustand/vanilla';
 
+import { deserializeParameterValues, serializeParameterValues } from '@/scenes/parameter-serialization';
 import { clampParameterValue, defaultParameterValues } from '@/scenes/parameters';
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
 
@@ -45,6 +46,8 @@ export interface SceneRuntime {
 	// values, and one object carrying both under that name reads as a bug.
 	readonly schema: ParameterSchema;
 	readonly store: RuntimeStore;
+	serializeParameters: () => string;
+	applySerializedParameters: (search: string) => ParameterValues;
 }
 
 // Exhaustiveness guard: a state added to PlaybackState without a matching
@@ -141,5 +144,28 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		return store.getState().playback;
 	}
 
-	return { start, stop, setParameter, getState, schema: scene.parameters, store };
+	function serializeParameters(): string {
+		return serializeParameterValues(scene.parameters, store.getState().parameters);
+	}
+
+	// Total, not a diff against defaults: a key the search string omits comes back
+	// from deserializeParameterValues as that parameter's default, and every
+	// resolved entry is routed through setParameter rather than written to the
+	// store directly. That is the only place the clamp, the store write, and the
+	// forward-only-while-playing rule live, and duplicating any of it here would
+	// let a link apply a value setParameter itself would have rejected or
+	// reshaped. This runs once at mount, before a listener has touched a control,
+	// so overwriting every parameter is a description of the Scene the link
+	// carries, not a value clobbered mid-drag.
+	function applySerializedParameters(search: string): ParameterValues {
+		const decoded = deserializeParameterValues(scene.parameters, search);
+
+		for (const [name, value] of Object.entries(decoded)) {
+			setParameter(name, value);
+		}
+
+		return store.getState().parameters;
+	}
+
+	return { start, stop, setParameter, getState, schema: scene.parameters, store, serializeParameters, applySerializedParameters };
 }
