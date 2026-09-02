@@ -99,10 +99,11 @@ describe('scene runtime', (): void => {
 		expect(runtime.getState()).toEqual({ status: 'playing' });
 	});
 
-	// Building the graph throws after the context is already running, which is the
-	// one failure that used to escape as a rejected promise. The caller discards
-	// that promise, so it surfaced nowhere and left the button dead for good.
-	it('reports a failure when building the graph throws, rather than rejecting', async (): Promise<void> => {
+	// Everything after resume used to sit outside the try, so a throw from any of
+	// it escaped as a rejected promise. The caller discards that promise, so it
+	// surfaced nowhere and left the button dead for good. One test per command,
+	// because covering only the first would let the other slip back out.
+	it('reports a failure when starting the graph throws, rather than rejecting', async (): Promise<void> => {
 		const backend = createRecordingBackend({ start: 'fail' });
 		const runtime = createSceneRuntime(backend);
 
@@ -113,18 +114,47 @@ describe('scene runtime', (): void => {
 			status: 'failed',
 			reason: 'OscillatorNode could not be constructed',
 		});
+		expect(backend.commands).toEqual([{ kind: 'resume' }, { kind: 'start' }]);
 	});
 
-	it('still accepts a press after the graph failed to build', async (): Promise<void> => {
-		const backend = createRecordingBackend({ start: 'fail' });
+	it('reports a failure when the fade in throws, rather than rejecting', async (): Promise<void> => {
+		const backend = createRecordingBackend({ fadeIn: 'fail' });
 		const runtime = createSceneRuntime(backend);
 
-		await runtime.start();
+		const result = await runtime.start();
+
+		expect(result).toEqual({ ok: false, reason: 'audio-unavailable' });
+		expect(runtime.getState()).toEqual({
+			status: 'failed',
+			reason: 'gain ramp could not be scheduled',
+		});
+		expect(backend.commands).toEqual([
+			{ kind: 'resume' },
+			{ kind: 'start' },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
+	});
+
+	// A listener whose first press failed presses again and gets sound, on the same
+	// runtime. `already-starting` on the second press would mean it never left the
+	// starting state and no press could ever get through again.
+	it('recovers on a second press after the graph failed to build', async (): Promise<void> => {
+		const backend = createRecordingBackend({ start: 'fail-once' });
+		const runtime = createSceneRuntime(backend);
+
+		const firstPress = await runtime.start();
 		const secondPress = await runtime.start();
 
-		// `already-starting` here would mean the runtime never left the starting
-		// state, and no later press could ever get through.
-		expect(secondPress).toEqual({ ok: false, reason: 'audio-unavailable' });
+		expect(firstPress).toEqual({ ok: false, reason: 'audio-unavailable' });
+		expect(secondPress).toEqual({ ok: true });
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+		expect(backend.commands).toEqual([
+			{ kind: 'resume' },
+			{ kind: 'start' },
+			{ kind: 'resume' },
+			{ kind: 'start' },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
 	});
 
 	it('publishes the same status through the store as getState, in order, across a start then a stop', async (): Promise<void> => {
