@@ -1,6 +1,16 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
 import HomePage from './page';
+
+// The page now pulls in the client toggle, which imports Tone.js. jsdom has no
+// AudioContext, so the audio module is swapped out wholesale rather than
+// stubbing Web Audio itself.
+vi.mock('@/audio/tone-output', () => ({
+	readOutputLevel: (): number => 0,
+	startTone: (): Promise<void> => Promise.resolve(),
+	stopTone: (): void => {},
+}));
 
 // This is the seam that stops the suite from passing on zero tests.
 describe('home page', () => {
@@ -9,5 +19,6 @@ describe('home page', () => {
 
 		expect(markup).toContain('<h1');
 		expect(markup).toContain('FieldTone');
+		expect(markup).toContain('Play');
 	});
 });
