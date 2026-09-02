@@ -34,7 +34,7 @@ These cost real bugs to learn. Each one is invisible to the type checker and to 
 
 **Prove audibility with an `OfflineAudioContext`.** A headless browser reports its AudioContext as `running` and then freezes the clock at the first block, so a realtime meter reads zero whether the graph works or is broken. An offline render needs no sound card and answers the same way everywhere. Guard any assertion that depends on the realtime clock advancing, and skip rather than assert on silence. `Tone.Offline` swaps the global context around an awaited callback, so never let two renders overlap.
 
-**Import Tone.js in `tone-backend.ts` and nowhere else.** Everything else under `src/audio/` stays Tone-free, which is what lets the runtime be tested with no AudioContext anywhere near it. A `import type` from Tone is fine anywhere, since `verbatimModuleSyntax` erases it.
+**Keep the runtime Tone-free, and let each Scene build its own graph.** Two kinds of file import Tone as a value: `tone-backend.ts`, which owns the envelope and the master bus, and a Scene's Bed builder, which declares the graph that Scene plays. Everything between them stays Tone-free, including `audio-backend.ts`, `scene-runtime.ts` and `recording-backend.ts`, which is what lets the runtime be tested with no AudioContext anywhere near it. Moving a Scene's node construction into the adapter would defeat that, because the adapter would then need to know every Scene and adding one would mean editing it. An `import type` from Tone is fine anywhere, since `verbatimModuleSyntax` erases it.
 
 **Schedule against the audio clock.** Principle V rules out JS timers and polling loops. Tone's context has its own `setTimeout` that rides the existing ticker and costs nothing extra.
 
@@ -82,6 +82,7 @@ A claim about a comment is a claim about the code, so verify it against the code
 - Style, naming, formatting, and import ordering. ESLint and stylelint own those.
 - The `nextjs-agent-rules` block at the bottom of this file, which `next dev` rewrites.
 - Long comments that record a real incident. Concision would destroy what they carry.
+- A Scene importing Tone as a value. That is the design, not a leak of the seam.
 - A decision an ADR already explains. Argue with the ADR instead, as a P2.
 
 ### Output
