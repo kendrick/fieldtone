@@ -2,34 +2,39 @@
 
 import type { ReactElement } from 'react';
 
-import { useState } from 'react';
+import type { RuntimeState, SceneRuntime } from '@/audio/scene-runtime';
 
-import { startTone, stopTone } from '@/audio/tone-output';
+import { useStore } from 'zustand';
+
+import { sceneRuntime } from '@/audio/runtime';
 import { cn } from '@/lib/utils';
 
-type PlaybackState = 'silent' | 'starting' | 'playing' | 'failed';
+interface PlayToggleProps {
+	runtime?: SceneRuntime;
+}
 
-export function PlayToggle(): ReactElement {
-	const [state, setState] = useState<PlaybackState>('silent');
-	const isPlaying = state === 'playing';
+// Module scope, not inline: a selector defined inside the component gets a new
+// identity every render, and returning a fresh object (rather than the
+// `status` primitive) would re-render on every store write instead of only
+// when the status actually changes.
+function selectStatus(state: RuntimeState): RuntimeState['playback']['status'] {
+	return state.playback.status;
+}
 
-	async function handleClick(): Promise<void> {
-		if (state === 'starting') {
+export function PlayToggle({ runtime = sceneRuntime }: PlayToggleProps): ReactElement {
+	const status = useStore(runtime.store, selectStatus);
+	const isPlaying = status === 'playing';
+
+	function handleClick(): void {
+		if (status === 'playing') {
+			runtime.stop();
 			return;
 		}
-		if (state === 'playing') {
-			stopTone();
-			setState('silent');
-			return;
-		}
-		setState('starting');
-		try {
-			await startTone();
-			setState('playing');
-		}
-		catch {
-			setState('failed');
-		}
+		// Await nothing before this call: iOS spends the user gesture on
+		// whichever await runs first, and the runtime's own `resume` has to be
+		// the one that gets it. The runtime already rejects a press that lands
+		// while starting, so no guard is needed here.
+		void runtime.start();
 	}
 
 	return (
@@ -39,9 +44,9 @@ export function PlayToggle(): ReactElement {
 				// No aria-pressed: the label already flips between "Play" and "Stop",
 				// so pairing it with aria-pressed would make a screen reader announce
 				// "Stop, pressed" — the two cues contradict each other.
-				// No disabled: a click while starting is ignored via the state guard
-				// above instead, because disabling the button would drop keyboard
-				// focus mid-interaction.
+				// No disabled: the runtime turns away a press that lands while
+				// starting, and disabling the button would drop keyboard focus
+				// mid-interaction.
 				onClick={handleClick}
 				className={cn(
 					'min-h-12 rounded-full border px-8 text-base font-medium transition-colors',
@@ -53,7 +58,7 @@ export function PlayToggle(): ReactElement {
 			>
 				{isPlaying ? 'Stop' : 'Play'}
 			</button>
-			{state === 'failed' && (
+			{status === 'failed' && (
 				<p role="alert">Audio could not start. Check your device sound settings and press Play again.</p>
 			)}
 		</div>
