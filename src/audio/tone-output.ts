@@ -24,6 +24,8 @@ interface Output {
 
 interface OutputProbe {
 	readOutputLevel: () => number;
+	readContextTime: () => number;
+	renderVoiceRms: (seconds?: number) => Promise<number>;
 }
 
 declare global {
@@ -46,6 +48,40 @@ function requestPlaybackSession(): void {
 	}
 }
 
+function createVoice(destination: Tone.InputNode): Voice {
+	const envelope = new Tone.Gain(0).connect(destination);
+	const oscillator = new Tone.Oscillator(FREQUENCY_HZ, 'sine').connect(envelope);
+	oscillator.start();
+	envelope.gain.rampTo(LEVEL, FADE_SECONDS);
+	return { oscillator, envelope };
+}
+
+// A browser with no audio output device reports the context as `running` but
+// never advances its clock past the first block, so nothing is ever rendered
+// in real time. Tests read this to tell a silent bug from a silent machine.
+export function readContextTime(): number {
+	return Tone.getContext().currentTime;
+}
+
+// The same voice, rendered offline. OfflineAudioContext needs no sound card, so
+// this is the one measurement of "does this graph make a sound" that holds on a
+// headless CI runner. It shares createVoice with playback rather than modelling
+// it a second time, which is the only reason the answer means anything.
+export async function renderVoiceRms(seconds = 1): Promise<number> {
+	const buffer = await Tone.Offline((context) => {
+		createVoice(context.destination);
+	}, seconds);
+	const samples = buffer.getChannelData(0);
+	// Second half only: the first half is still inside the fade.
+	const start = Math.floor(samples.length / 2);
+	let total = 0;
+	for (let index = start; index < samples.length; index += 1) {
+		const sample = samples[index] ?? 0;
+		total += sample * sample;
+	}
+	return Math.sqrt(total / (samples.length - start));
+}
+
 export function readOutputLevel(): number {
 	if (output === undefined) {
 		return 0;
@@ -66,7 +102,7 @@ function ensureOutput(): Output {
 	master.connect(meter);
 	master.toDestination();
 	output = { master, meter };
-	window.__fieldtone = { readOutputLevel };
+	window.__fieldtone = { readContextTime, readOutputLevel, renderVoiceRms };
 	return output;
 }
 
@@ -83,11 +119,7 @@ export async function startTone(): Promise<void> {
 		return;
 	}
 	const { master } = ensureOutput();
-	const envelope = new Tone.Gain(0).connect(master);
-	const oscillator = new Tone.Oscillator(FREQUENCY_HZ, 'sine').connect(envelope);
-	oscillator.start();
-	envelope.gain.rampTo(LEVEL, FADE_SECONDS);
-	voice = { oscillator, envelope };
+	voice = createVoice(master);
 }
 
 export function stopTone(): void {
