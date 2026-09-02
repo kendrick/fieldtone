@@ -1,3 +1,4 @@
+import type { ParameterValues } from '@/scenes/parameters';
 import type { Scene } from '@/scenes/scene';
 
 // The seam between the play button and Tone.js. Everything below the line is
@@ -10,8 +11,13 @@ export interface AudioBackend {
 	resume: () => Promise<void>;
 	// The Scene names which Bed to build; the backend owns the envelope around it.
 	// The Bed starts silent, and fading it in is a separate command, so the caller
-	// decides when audio becomes audible.
-	start: (scene: Scene) => void;
+	// decides when audio becomes audible. The values come in with the Scene rather
+	// than as later setParameter calls, so the graph is built at the settings the
+	// listener already chose instead of audibly sliding to them after the fade.
+	start: (scene: Scene, parameters: ParameterValues) => void;
+	// A no-op when nothing is playing. The runtime keeps the value either way, so
+	// a setting made while idle reaches the graph through the next start.
+	setParameter: (name: string, value: number) => void;
 	fadeIn: (seconds: number) => void;
 	fadeOut: (seconds: number) => void;
 	// The delay rides on the command rather than a setTimeout because the

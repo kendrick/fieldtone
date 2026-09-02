@@ -1,4 +1,5 @@
 import type { AudioBackend } from './audio-backend';
+import type { ParameterValues } from '@/scenes/parameters';
 import type { BedHandle, Scene } from '@/scenes/scene';
 import * as Tone from 'tone';
 
@@ -67,9 +68,9 @@ function requestPlaybackSession(): void {
 // `fadeIn` can be separate commands, and so the offline render can reuse both.
 // The Scene owns everything under the envelope; this file owns only the fade
 // between the Bed and the master bus.
-function createVoice(scene: Scene, destination: Tone.InputNode): Voice {
+function createVoice(scene: Scene, parameters: ParameterValues, destination: Tone.InputNode): Voice {
 	const envelope = new Tone.Gain(0).connect(destination);
-	return { handle: scene.bed({ destination: envelope }), envelope };
+	return { handle: scene.bed({ destination: envelope, parameters }), envelope };
 }
 
 function fadeVoiceIn(voice: Voice, seconds: number): void {
@@ -102,9 +103,9 @@ export function readContextTime(): number {
 // impulse renders asynchronously and a graph measured before it exists comes
 // back silent. Two of these must never overlap: Offline swaps the global context
 // around an awaited callback, so callers run them one at a time.
-async function renderBed(scene: Scene, seconds: number): Promise<Float32Array> {
+async function renderBed(scene: Scene, parameters: ParameterValues, seconds: number): Promise<Float32Array> {
 	const buffer = await Tone.Offline(async (context) => {
-		const voice = createVoice(scene, context.destination);
+		const voice = createVoice(scene, parameters, context.destination);
 		await voice.handle.ready;
 		fadeVoiceIn(voice, FADE_SECONDS);
 	}, seconds);
@@ -119,6 +120,10 @@ export function createToneBackend(): ToneBackend {
 	// The Scene the probe renders. It outlives the voice so a stopped session can
 	// still be measured, and it is why the render probes cannot be module-level.
 	let current: Scene | undefined;
+	// The values the live graph is set to, kept beside the Scene for the same
+	// reason: the offline probe then measures what the listener has rather than
+	// the Scene's defaults, which is the difference between an oracle and a demo.
+	let currentParameters: ParameterValues = {};
 
 	function readOutputLevel(): number {
 		if (output === undefined) {
@@ -135,7 +140,7 @@ export function createToneBackend(): ToneBackend {
 		if (current === undefined) {
 			return 0;
 		}
-		const samples = await renderBed(current, seconds);
+		const samples = await renderBed(current, currentParameters, seconds);
 		// Second half only: the first half is still inside the fade.
 		return rootMeanSquare(samples, Math.floor(samples.length / 2), samples.length);
 	}
@@ -144,7 +149,7 @@ export function createToneBackend(): ToneBackend {
 		if (current === undefined) {
 			return [];
 		}
-		const samples = await renderBed(current, seconds);
+		const samples = await renderBed(current, currentParameters, seconds);
 		const start = Math.floor(samples.length / 2);
 		const width = Math.floor((samples.length - start) / FINGERPRINT_WINDOWS);
 		if (width === 0) {
@@ -196,12 +201,23 @@ export function createToneBackend(): ToneBackend {
 		}
 	}
 
-	function start(scene: Scene): void {
+	function start(scene: Scene, parameters: ParameterValues): void {
 		if (voice !== undefined) {
 			return;
 		}
 		current = scene;
-		voice = createVoice(scene, ensureOutput().master);
+		currentParameters = parameters;
+		voice = createVoice(scene, parameters, ensureOutput().master);
+	}
+
+	function setParameter(name: string, value: number): void {
+		if (voice === undefined) {
+			return;
+		}
+		// stop() clears `voice` before it schedules the dispose, so nothing here can
+		// reach a handle whose nodes are already gone.
+		currentParameters = { ...currentParameters, [name]: value };
+		voice.handle.setParameter(name, value);
 	}
 
 	function fadeIn(seconds: number): void {
@@ -239,5 +255,5 @@ export function createToneBackend(): ToneBackend {
 		}, afterSeconds + DISPOSE_GRACE_SECONDS);
 	}
 
-	return { resume, start, fadeIn, fadeOut, stop, probe };
+	return { resume, start, setParameter, fadeIn, fadeOut, stop, probe };
 }

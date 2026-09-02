@@ -100,6 +100,8 @@ function buildBed(host: BedHost): BedHandle {
 				lfo.stop(at);
 			}
 		},
+		// A no-op until the next commit, which ramps Ember's real parameters here.
+		setParameter: () => {},
 		dispose: () => {
 			for (const { oscillator, lfo } of voices) {
 				oscillator.dispose();
@@ -115,5 +117,7 @@ function buildBed(host: BedHost): BedHandle {
 
 export const ember: Scene = {
 	id: 'ember',
+	// Empty until the next commit, which declares Ember's real schema.
+	parameters: {},
 	bed: buildBed,
 };
