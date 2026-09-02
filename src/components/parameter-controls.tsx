@@ -53,7 +53,10 @@ function ParameterSlider({ runtime, name, declaration }: ParameterSliderProps): 
 				value={value}
 				onChange={handleChange}
 				className={cn(
-					'flex-1 accent-foreground',
+					// h-6 rather than the 16px a range input defaults to: WCAG 2.2's
+					// target-size minimum is 24px, and the taller row around it does
+					// not count, since the input itself is the only thing you can grab.
+					'h-6 flex-1 accent-foreground',
 					'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background',
 				)}
 			/>
