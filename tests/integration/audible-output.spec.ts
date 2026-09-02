@@ -1,31 +1,5 @@
 import { expect, test } from '@playwright/test';
-
-// Ember's Bed renders a second-half RMS near 0.20, and its quietest draws sit
-// around 0.13, so 0.05 clears noise-floor jitter with room to spare and without
-// waiting for full level.
-const AUDIBLE_THRESHOLD = 0.05;
-const SILENT_THRESHOLD = 0.005;
-
-function readLevel(): number {
-	return window.__fieldtone?.readOutputLevel() ?? 0;
-}
-
-function renderBedRms(): Promise<number> {
-	return window.__fieldtone?.renderBedRms() ?? Promise.resolve(0);
-}
-
-function renderBedFingerprint(): Promise<number[]> {
-	return window.__fieldtone?.renderBedFingerprint() ?? Promise.resolve([]);
-}
-
-async function isRealtimeAudioAvailable(): Promise<boolean> {
-	const before = window.__fieldtone?.readContextTime() ?? 0;
-	await new Promise((resolve) => {
-		setTimeout(resolve, 300);
-	});
-	const after = window.__fieldtone?.readContextTime() ?? 0;
-	return after > before;
-}
+import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, readLevel, renderBedFingerprint, renderBedRms, SILENT_THRESHOLD } from './probe';
 
 test.describe('audible output', () => {
 	test('the bed renders as sound rather than silence', async ({ page }): Promise<void> => {
