@@ -1,6 +1,28 @@
 {
 	"$schema": "https://json.schemastore.org/tsconfig",
 	"extends": "./tsconfig.base.json",
-	"include": ["src/**/*.ts", "src/**/*.tsx", "*.config.ts", "*.config.mjs"],
-	"exclude": ["node_modules", "dist", "build", ".next", "out"]
+	"compilerOptions": {
+		// Next writes these itself, but only into a tsconfig with no `extends`.
+		// This one extends the base, so Next bails out and they live here by hand.
+		// `preserve` hands JSX to the Next compiler rather than tsc.
+		"jsx": "preserve",
+		"paths": {
+			"@/*": ["./src/*"]
+		},
+		"plugins": [{ "name": "next" }]
+	},
+	"include": [
+		"next-env.d.ts",
+		".next/types/**/*.ts",
+		".next/dev/types/**/*.ts",
+		"src/**/*.ts",
+		"src/**/*.tsx",
+		"tests/**/*.ts",
+		"tests/**/*.tsx",
+		"*.config.ts",
+		"*.config.mjs"
+	],
+	// `.next` is deliberately absent below: exclude outranks include, and the
+	// generated route types above live in there.
+	"exclude": ["node_modules", "dist", "build", "out"]
 }

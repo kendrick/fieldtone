@@ -1,11 +1,12 @@
 # Trimmed from the unbranded repo's own workflow: dropped its OS/Node matrix and
-# the create-unbranded smoke step, which are CLI-internal. This runs the three
-# scripts opt-ci-github's units provide (lint, typecheck, test) on a single leg,
-# which is enough signal for a scaffold and cheap to run.
+# the create-unbranded smoke step, which are CLI-internal. Everything runs on a
+# single leg; a matrix buys little for an app whose only runtime pin is .nvmrc.
 #
-# This workflow departs from the scaffold in one place. It reads the Node version
+# This workflow departs from the scaffold in two places. It reads the Node version
 # from .nvmrc instead of a pin, so `unbranded diff` reports drift here and
-# `unbranded update` merges the difference as a local edit.
+# `unbranded update` merges the difference as a local edit. It also builds the
+# static export and drives Playwright against it, because a green unit suite says
+# nothing about whether the artifact that actually ships renders.
 name: CI
 
 on:
@@ -42,3 +43,23 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Build static export
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      # Chromium alone. WebKit and Firefox stay a local check: three engines here
+      # would triple the browser download for a shell that renders one heading.
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: pnpm test:e2e --project=mobile-chrome --project=desktop-chrome
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
