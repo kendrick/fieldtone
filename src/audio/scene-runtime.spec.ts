@@ -2,20 +2,23 @@ import type { PlaybackState } from './playback-state';
 
 import { describe, expect, it } from 'vitest';
 
+import { createSilentScene } from '@/scenes/silent-scene';
 import { createRecordingBackend } from './recording-backend';
 import { createSceneRuntime, FADE_IN_SECONDS, FADE_OUT_SECONDS } from './scene-runtime';
+
+const silentScene = createSilentScene('silent');
 
 describe('scene runtime', (): void => {
 	it('starts by resuming, starting, and fading in, then reports playing', async (): Promise<void> => {
 		const backend = createRecordingBackend();
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		const result = await runtime.start();
 
 		expect(result).toEqual({ ok: true });
 		expect(backend.commands).toEqual([
 			{ kind: 'resume' },
-			{ kind: 'start' },
+			{ kind: 'start', scene: 'silent' },
 			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
 		]);
 		expect(runtime.getState()).toEqual({ status: 'playing' });
@@ -23,7 +26,7 @@ describe('scene runtime', (): void => {
 
 	it('stops a playing scene by fading out then stopping, and reports idle', async (): Promise<void> => {
 		const backend = createRecordingBackend();
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		await runtime.start();
 		const result = runtime.stop();
@@ -38,7 +41,7 @@ describe('scene runtime', (): void => {
 
 	it('refuses to stop a scene that never started, and touches the backend not at all', (): void => {
 		const backend = createRecordingBackend();
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		const result = runtime.stop();
 
@@ -48,7 +51,7 @@ describe('scene runtime', (): void => {
 
 	it('refuses a second start while already playing, and records nothing further', async (): Promise<void> => {
 		const backend = createRecordingBackend();
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		await runtime.start();
 		const commandsAfterFirstStart = backend.commands;
@@ -60,7 +63,7 @@ describe('scene runtime', (): void => {
 
 	it('refuses a start that lands while another start is still in flight', async (): Promise<void> => {
 		const backend = createRecordingBackend();
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		// Fire both starts before awaiting either: the second call must land while
 		// the first is still suspended on backend.resume(), which is the only
@@ -74,14 +77,14 @@ describe('scene runtime', (): void => {
 		expect(secondResult).toEqual({ ok: false, reason: 'already-starting' });
 		expect(backend.commands).toEqual([
 			{ kind: 'resume' },
-			{ kind: 'start' },
+			{ kind: 'start', scene: 'silent' },
 			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
 		]);
 	});
 
 	it('fails to start when resume rejects, then succeeds on a later retry', async (): Promise<void> => {
 		const failingBackend = createRecordingBackend({ resume: 'fail' });
-		const failingRuntime = createSceneRuntime(failingBackend);
+		const failingRuntime = createSceneRuntime(failingBackend, silentScene);
 
 		const failedResult = await failingRuntime.start();
 
@@ -92,7 +95,7 @@ describe('scene runtime', (): void => {
 		});
 
 		const backend = createRecordingBackend();
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 		const retryResult = await runtime.start();
 
 		expect(retryResult).toEqual({ ok: true });
@@ -105,7 +108,7 @@ describe('scene runtime', (): void => {
 	// because covering only the first would let the other slip back out.
 	it('reports a failure when starting the graph throws, rather than rejecting', async (): Promise<void> => {
 		const backend = createRecordingBackend({ start: 'fail' });
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		const result = await runtime.start();
 
@@ -114,12 +117,12 @@ describe('scene runtime', (): void => {
 			status: 'failed',
 			reason: 'OscillatorNode could not be constructed',
 		});
-		expect(backend.commands).toEqual([{ kind: 'resume' }, { kind: 'start' }]);
+		expect(backend.commands).toEqual([{ kind: 'resume' }, { kind: 'start', scene: 'silent' }]);
 	});
 
 	it('reports a failure when the fade in throws, rather than rejecting', async (): Promise<void> => {
 		const backend = createRecordingBackend({ fadeIn: 'fail' });
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		const result = await runtime.start();
 
@@ -130,7 +133,7 @@ describe('scene runtime', (): void => {
 		});
 		expect(backend.commands).toEqual([
 			{ kind: 'resume' },
-			{ kind: 'start' },
+			{ kind: 'start', scene: 'silent' },
 			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
 		]);
 	});
@@ -140,7 +143,7 @@ describe('scene runtime', (): void => {
 	// starting state and no press could ever get through again.
 	it('recovers on a second press after the graph failed to build', async (): Promise<void> => {
 		const backend = createRecordingBackend({ start: 'fail-once' });
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 
 		const firstPress = await runtime.start();
 		const secondPress = await runtime.start();
@@ -150,16 +153,16 @@ describe('scene runtime', (): void => {
 		expect(runtime.getState()).toEqual({ status: 'playing' });
 		expect(backend.commands).toEqual([
 			{ kind: 'resume' },
-			{ kind: 'start' },
+			{ kind: 'start', scene: 'silent' },
 			{ kind: 'resume' },
-			{ kind: 'start' },
+			{ kind: 'start', scene: 'silent' },
 			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
 		]);
 	});
 
 	it('publishes the same status through the store as getState, in order, across a start then a stop', async (): Promise<void> => {
 		const backend = createRecordingBackend();
-		const runtime = createSceneRuntime(backend);
+		const runtime = createSceneRuntime(backend, silentScene);
 		const statuses: PlaybackState['status'][] = [];
 
 		const unsubscribe = runtime.store.subscribe((state): void => {

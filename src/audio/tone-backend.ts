@@ -1,4 +1,5 @@
 import type { AudioBackend } from './audio-backend';
+import type { BedHandle, Scene } from '@/scenes/scene';
 import * as Tone from 'tone';
 
 // Every Tone.js call in the app lives here: this is the one AudioBackend that
@@ -11,12 +12,19 @@ import * as Tone from 'tone';
 // Calling the factory builds nothing either; the first Tone node appears in
 // resume/start.
 
-const FREQUENCY_HZ = 220;
-const LEVEL = 0.25;
+// The Scene mixes its own Bed, so the envelope is only the fade and has no
+// level of its own to impose.
+const LEVEL = 1;
 const FADE_SECONDS = 0.3;
+// Long enough for the stop to have taken effect before the nodes go away:
+// disposing a node mid-release cuts the tail the Bed just scheduled.
+const DISPOSE_GRACE_SECONDS = 0.05;
+// A handful of windows is enough to tell a live Bed from a stuck one; more
+// would just be noise to eyeball in a console.
+const FINGERPRINT_WINDOWS = 8;
 
 interface Voice {
-	oscillator: Tone.Oscillator;
+	handle: BedHandle;
 	envelope: Tone.Gain;
 }
 
@@ -28,7 +36,8 @@ interface Output {
 interface OutputProbe {
 	readOutputLevel: () => number;
 	readContextTime: () => number;
-	renderVoiceRms: (seconds?: number) => Promise<number>;
+	renderBedRms: (seconds?: number) => Promise<number>;
+	renderBedFingerprint: (seconds?: number) => Promise<number[]>;
 }
 
 // The runtime never reads `probe`. It hangs off the backend so the adapter's
@@ -56,15 +65,24 @@ function requestPlaybackSession(): void {
 
 // Builds at silence and stays there. Fading up is a separate step so `start` and
 // `fadeIn` can be separate commands, and so the offline render can reuse both.
-function createVoice(destination: Tone.InputNode): Voice {
+// The Scene owns everything under the envelope; this file owns only the fade
+// between the Bed and the master bus.
+function createVoice(scene: Scene, destination: Tone.InputNode): Voice {
 	const envelope = new Tone.Gain(0).connect(destination);
-	const oscillator = new Tone.Oscillator(FREQUENCY_HZ, 'sine').connect(envelope);
-	oscillator.start();
-	return { oscillator, envelope };
+	return { handle: scene.bed({ destination: envelope }), envelope };
 }
 
 function fadeVoiceIn(voice: Voice, seconds: number): void {
 	voice.envelope.gain.rampTo(LEVEL, seconds);
+}
+
+function rootMeanSquare(samples: Float32Array, from: number, to: number): number {
+	let total = 0;
+	for (let index = from; index < to; index += 1) {
+		const sample = samples[index] ?? 0;
+		total += sample * sample;
+	}
+	return Math.sqrt(total / (to - from));
 }
 
 // A browser with no audio output device reports the context as `running` but
@@ -79,19 +97,18 @@ export function readContextTime(): number {
 // headless CI runner. It shares createVoice and fadeVoiceIn with playback rather
 // than modelling either a second time, which is the only reason the answer means
 // anything — and without the fade the render would measure silence.
-export async function renderVoiceRms(seconds = 1): Promise<number> {
-	const buffer = await Tone.Offline((context) => {
-		fadeVoiceIn(createVoice(context.destination), FADE_SECONDS);
+//
+// Awaiting `ready` before the fade keeps a Reverb's tail in the render; the
+// impulse renders asynchronously and a graph measured before it exists comes
+// back silent. Two of these must never overlap: Offline swaps the global context
+// around an awaited callback, so callers run them one at a time.
+async function renderBed(scene: Scene, seconds: number): Promise<Float32Array> {
+	const buffer = await Tone.Offline(async (context) => {
+		const voice = createVoice(scene, context.destination);
+		await voice.handle.ready;
+		fadeVoiceIn(voice, FADE_SECONDS);
 	}, seconds);
-	const samples = buffer.getChannelData(0);
-	// Second half only: the first half is still inside the fade.
-	const start = Math.floor(samples.length / 2);
-	let total = 0;
-	for (let index = start; index < samples.length; index += 1) {
-		const sample = samples[index] ?? 0;
-		total += sample * sample;
-	}
-	return Math.sqrt(total / (samples.length - start));
+	return buffer.getChannelData(0);
 }
 
 export function createToneBackend(): ToneBackend {
@@ -99,6 +116,9 @@ export function createToneBackend(): ToneBackend {
 	// test can throw an instance away rather than reset a module.
 	let output: Output | undefined;
 	let voice: Voice | undefined;
+	// The Scene the probe renders. It outlives the voice so a stopped session can
+	// still be measured, and it is why the render probes cannot be module-level.
+	let current: Scene | undefined;
 
 	function readOutputLevel(): number {
 		if (output === undefined) {
@@ -108,7 +128,43 @@ export function createToneBackend(): ToneBackend {
 		return Array.isArray(value) ? (value[0] ?? 0) : value;
 	}
 
-	const probe: OutputProbe = { readContextTime, readOutputLevel, renderVoiceRms };
+	// Both render probes answer empty rather than throw when no Scene has started:
+	// they are read from a browser console and from Playwright, either of which
+	// may get there before anyone presses Play.
+	async function renderBedRms(seconds = 1): Promise<number> {
+		if (current === undefined) {
+			return 0;
+		}
+		const samples = await renderBed(current, seconds);
+		// Second half only: the first half is still inside the fade.
+		return rootMeanSquare(samples, Math.floor(samples.length / 2), samples.length);
+	}
+
+	async function renderBedFingerprint(seconds = 1): Promise<number[]> {
+		if (current === undefined) {
+			return [];
+		}
+		const samples = await renderBed(current, seconds);
+		const start = Math.floor(samples.length / 2);
+		const width = Math.floor((samples.length - start) / FINGERPRINT_WINDOWS);
+		if (width === 0) {
+			// A render too short to fill every window would divide by zero.
+			return [];
+		}
+		const windows: number[] = [];
+		for (let index = 0; index < FINGERPRINT_WINDOWS; index += 1) {
+			const from = start + index * width;
+			windows.push(rootMeanSquare(samples, from, from + width));
+		}
+		return windows;
+	}
+
+	const probe: OutputProbe = {
+		readContextTime,
+		readOutputLevel,
+		renderBedRms,
+		renderBedFingerprint,
+	};
 
 	function ensureOutput(): Output {
 		if (output !== undefined) {
@@ -140,15 +196,12 @@ export function createToneBackend(): ToneBackend {
 		}
 	}
 
-	// A later ticket gives `start` a Scene graph declaration to build from, and
-	// the Scene's own graph builder replaces createVoice. The other four commands
-	// are untouched by that change: resume, fadeIn, fadeOut and stop say nothing
-	// about what the graph contains.
-	function start(): void {
+	function start(scene: Scene): void {
 		if (voice !== undefined) {
 			return;
 		}
-		voice = createVoice(ensureOutput().master);
+		current = scene;
+		voice = createVoice(scene, ensureOutput().master);
 	}
 
 	function fadeIn(seconds: number): void {
@@ -173,13 +226,17 @@ export function createToneBackend(): ToneBackend {
 		// ramps on one Param. Tone cancels the earlier ramp when that happens, which
 		// would otherwise yank the fade partway through. Clearing the slot before
 		// scheduling the stop is what makes the next press build a fresh one.
-		const { oscillator, envelope } = voice;
+		const { handle, envelope } = voice;
 		voice = undefined;
-		oscillator.onstop = (): void => {
-			oscillator.dispose();
+		handle.stop(Tone.now() + afterSeconds);
+		// The context's own timeout is checked against the audio clock on Tone's
+		// existing ticker, so the teardown costs no JS timer of ours—which
+		// Principle V rules out anyway. A node `onstop` would not do: it fires for
+		// one source, and a Bed is a graph.
+		Tone.getContext().setTimeout(() => {
+			handle.dispose();
 			envelope.dispose();
-		};
-		oscillator.stop(Tone.now() + afterSeconds);
+		}, afterSeconds + DISPOSE_GRACE_SECONDS);
 	}
 
 	return { resume, start, fadeIn, fadeOut, stop, probe };

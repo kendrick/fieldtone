@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 
-// 0.05 sits roughly 3.5x under the ~0.18 RMS a 220Hz sine at gain 0.25
-// produces, so it clears noise-floor jitter without waiting for full level.
+// Ember's Bed renders a second-half RMS near 0.20, and its quietest draws sit
+// around 0.13, so 0.05 clears noise-floor jitter with room to spare and without
+// waiting for full level.
 const AUDIBLE_THRESHOLD = 0.05;
 const SILENT_THRESHOLD = 0.005;
 
@@ -9,8 +10,8 @@ function readLevel(): number {
 	return window.__fieldtone?.readOutputLevel() ?? 0;
 }
 
-function renderRms(): Promise<number> {
-	return window.__fieldtone?.renderVoiceRms() ?? Promise.resolve(0);
+function renderBedRms(): Promise<number> {
+	return window.__fieldtone?.renderBedRms() ?? Promise.resolve(0);
 }
 
 async function isRealtimeAudioAvailable(): Promise<boolean> {
@@ -23,7 +24,7 @@ async function isRealtimeAudioAvailable(): Promise<boolean> {
 }
 
 test.describe('audible output', () => {
-	test('the voice renders as sound rather than silence', async ({ page }): Promise<void> => {
+	test('the bed renders as sound rather than silence', async ({ page }): Promise<void> => {
 		await page.goto('/');
 		// The probe is installed on the first press, so play before rendering.
 		await page.getByRole('button', { name: 'Play' }).click();
@@ -32,7 +33,7 @@ test.describe('audible output', () => {
 		// Rendered offline, which needs no sound card and so answers the same way
 		// on a laptop and on a CI runner. It drives the very graph playback uses,
 		// so a silent bug shows up here even where nothing can be heard.
-		expect(await page.evaluate(renderRms)).toBeGreaterThan(AUDIBLE_THRESHOLD);
+		expect(await page.evaluate(renderBedRms)).toBeGreaterThan(AUDIBLE_THRESHOLD);
 	});
 
 	test('play makes sound, stop silences it, and play works again', async ({ page }): Promise<void> => {
