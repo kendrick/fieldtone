@@ -176,4 +176,29 @@ describe('scene runtime', (): void => {
 
 		expect(statuses).toEqual(['starting', 'playing', 'idle']);
 	});
+
+	// The runtime must carry no Scene-specific knowledge of its own: it only
+	// forwards whatever Scene it was given. A single Scene passing through would
+	// pass just as well if the runtime hardcoded that one id, so this proves it
+	// by running two runtimes over two Scenes and checking each fake got its own.
+	it('forwards each runtime its own scene id, not the other one', async (): Promise<void> => {
+		const backendOne = createRecordingBackend();
+		const backendTwo = createRecordingBackend();
+		const runtimeOne = createSceneRuntime(backendOne, createSilentScene('one'));
+		const runtimeTwo = createSceneRuntime(backendTwo, createSilentScene('two'));
+
+		await runtimeOne.start();
+		await runtimeTwo.start();
+
+		expect(backendOne.commands).toEqual([
+			{ kind: 'resume' },
+			{ kind: 'start', scene: 'one' },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
+		expect(backendTwo.commands).toEqual([
+			{ kind: 'resume' },
+			{ kind: 'start', scene: 'two' },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
+	});
 });
