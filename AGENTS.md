@@ -20,7 +20,7 @@ The five canonical roles, each label string equal to its name. See `docs/agents/
 
 ## Where things live
 
-`src/audio/` holds the audio seam. `audio-backend.ts` is the interface, `tone-backend.ts` is the one that makes sound, `recording-backend.ts` is the fake that records commands for tests, and `scene-runtime.ts` sequences them over a Zustand store. `src/app/` and `src/components/` are the UI. `tests/integration/` is Playwright across five browser projects; `*.spec.ts` beside a source file is Vitest.
+`src/audio/` holds the audio seam. `audio-backend.ts` is the interface, `tone-backend.ts` is the one that makes sound, `recording-backend.ts` is the fake that records commands for tests, and `scene-runtime.ts` sequences them over a Zustand store. `src/scenes/parameters.ts` holds the pure schema rules—declaration shape, clamping, and default resolution—with no audio. Each Scene's own schema lives in a Tone-free file beside its Bed (like `src/scenes/ember/parameters.ts`), because importing Tone at module scope builds an AudioContext that no unit test under jsdom survives. `src/app/` and `src/components/` are the UI. `tests/integration/` is Playwright across five browser projects; `*.spec.ts` beside a source file is Vitest.
 
 Run `pnpm lint`, `pnpm lint:css`, `pnpm typecheck`, `pnpm test`, and `pnpm test:e2e` before calling anything done. CI runs all five plus the static export.
 

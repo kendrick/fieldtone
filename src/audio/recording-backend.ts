@@ -1,4 +1,5 @@
 import type { AudioBackend } from './audio-backend';
+import type { ParameterValues } from '@/scenes/parameters';
 import type { Scene } from '@/scenes/scene';
 
 // This is the second implementation of the seam. A seam with one implementation
@@ -8,7 +9,8 @@ import type { Scene } from '@/scenes/scene';
 
 export type BackendCommand
 	= | { kind: 'resume' }
-		| { kind: 'start'; scene: string }
+		| { kind: 'start'; scene: string; parameters: ParameterValues }
+		| { kind: 'setParameter'; name: string; value: number }
 		| { kind: 'fadeIn'; seconds: number }
 		| { kind: 'fadeOut'; seconds: number }
 		| { kind: 'stop'; afterSeconds: number };
@@ -67,14 +69,21 @@ export function createRecordingBackend(
 				throw new Error('AudioContext is suspended rather than running');
 			}
 		},
-		start: (scene: Scene): void => {
+		start: (scene: Scene, parameters: ParameterValues): void => {
 			// The command carries the scene id rather than the full object,
 			// since the command list exists to be toEqual'd and a function-bearing
-			// object would make that brittle.
-			recordedCommands.push({ kind: 'start', scene: scene.id });
+			// object would make that brittle. The values are plain numbers, so they
+			// ride along whole.
+			recordedCommands.push({ kind: 'start', scene: scene.id, parameters });
 			if (startFails()) {
 				throw new Error('OscillatorNode could not be constructed');
 			}
+		},
+		// No failure gate here, unlike start and fadeIn. The runtime only ever hands
+		// this a name it found in the schema and a value it already clamped, so a
+		// throw would be a Scene bug with no listener-facing story to test against.
+		setParameter: (name: string, value: number): void => {
+			recordedCommands.push({ kind: 'setParameter', name, value });
 		},
 		fadeIn: (seconds: number): void => {
 			recordedCommands.push({ kind: 'fadeIn', seconds });

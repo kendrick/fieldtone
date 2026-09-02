@@ -1,3 +1,4 @@
+import type { ParameterSchema } from './parameters';
 import type { Scene } from './scene';
 
 // Test support under src/ rather than beside the specs, following the recording
@@ -6,13 +7,17 @@ import type { Scene } from './scene';
 // which is what lets a spec run under jsdom, where there is no AudioContext to
 // build into.
 
-export function createSilentScene(id: string): Scene {
+// The schema is a parameter so a spec can give this Scene whatever parameters
+// the case under test needs, rather than asserting against one baked-in set.
+export function createSilentScene(id: string, schema: ParameterSchema = {}): Scene {
 	return {
 		id,
+		parameters: schema,
 		bed: (_host) => {
 			return {
 				stop: () => {},
 				dispose: () => {},
+				setParameter: () => {},
 			};
 		},
 	};

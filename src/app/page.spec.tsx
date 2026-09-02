@@ -11,7 +11,8 @@ vi.mock('@/audio/runtime', async () => {
 	const { createRecordingBackend } = await import('@/audio/recording-backend');
 	const { createSceneRuntime } = await import('@/audio/scene-runtime');
 	const { createSilentScene } = await import('@/scenes/silent-scene');
-	return { sceneRuntime: createSceneRuntime(createRecordingBackend(), createSilentScene('silent')) };
+	const { emberParameters } = await import('@/scenes/ember/parameters');
+	return { sceneRuntime: createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters)) };
 });
 
 // This is the seam that stops the suite from passing on zero tests.
@@ -22,5 +23,7 @@ describe('home page', () => {
 		expect(markup).toContain('<h1');
 		expect(markup).toContain('FieldTone');
 		expect(markup).toContain('Play');
+		expect(markup).toContain('Space');
+		expect(markup).toContain('Brightness');
 	});
 });
