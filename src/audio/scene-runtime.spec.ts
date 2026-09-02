@@ -99,6 +99,34 @@ describe('scene runtime', (): void => {
 		expect(runtime.getState()).toEqual({ status: 'playing' });
 	});
 
+	// Building the graph throws after the context is already running, which is the
+	// one failure that used to escape as a rejected promise. The caller discards
+	// that promise, so it surfaced nowhere and left the button dead for good.
+	it('reports a failure when building the graph throws, rather than rejecting', async (): Promise<void> => {
+		const backend = createRecordingBackend({ start: 'fail' });
+		const runtime = createSceneRuntime(backend);
+
+		const result = await runtime.start();
+
+		expect(result).toEqual({ ok: false, reason: 'audio-unavailable' });
+		expect(runtime.getState()).toEqual({
+			status: 'failed',
+			reason: 'OscillatorNode could not be constructed',
+		});
+	});
+
+	it('still accepts a press after the graph failed to build', async (): Promise<void> => {
+		const backend = createRecordingBackend({ start: 'fail' });
+		const runtime = createSceneRuntime(backend);
+
+		await runtime.start();
+		const secondPress = await runtime.start();
+
+		// `already-starting` here would mean the runtime never left the starting
+		// state, and no later press could ever get through.
+		expect(secondPress).toEqual({ ok: false, reason: 'audio-unavailable' });
+	});
+
 	it('publishes the same status through the store as getState, in order, across a start then a stop', async (): Promise<void> => {
 		const backend = createRecordingBackend();
 		const runtime = createSceneRuntime(backend);

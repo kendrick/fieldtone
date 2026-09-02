@@ -60,6 +60,13 @@ export function createSceneRuntime(backend: AudioBackend): SceneRuntime {
 					// gesture on whichever await runs first, and only resume() is
 					// allowed to consume it.
 					await backend.resume();
+					// Building the graph belongs inside the same try. It is real Web
+					// Audio work and can throw on its own, and a throw that escaped
+					// here would leave the state on `starting` forever: the caller
+					// discards this promise, so nothing would surface, and every later
+					// press would be turned away as `already-starting`.
+					backend.start();
+					backend.fadeIn(FADE_IN_SECONDS);
 				}
 				catch (error) {
 					const reason = error instanceof Error ? error.message : String(error);
@@ -67,8 +74,6 @@ export function createSceneRuntime(backend: AudioBackend): SceneRuntime {
 					return { ok: false, reason: 'audio-unavailable' };
 				}
 
-				backend.start();
-				backend.fadeIn(FADE_IN_SECONDS);
 				store.setState({ playback: completeStart(starting) });
 				return { ok: true };
 			}

@@ -18,6 +18,10 @@ export interface RecordingBackend extends AudioBackend {
 
 export interface RecordingBackendOptions {
 	resume?: 'succeed' | 'fail';
+	// Building the graph is real Web Audio work in the Tone adapter: constructing
+	// nodes and starting an oscillator. Any of it can throw, so the runtime has to
+	// survive it, and this is how a test makes it happen.
+	start?: 'succeed' | 'fail';
 }
 
 export function createRecordingBackend(
@@ -37,6 +41,9 @@ export function createRecordingBackend(
 		},
 		start: (): void => {
 			recordedCommands.push({ kind: 'start' });
+			if (options.start === 'fail') {
+				throw new Error('OscillatorNode could not be constructed');
+			}
 		},
 		fadeIn: (seconds: number): void => {
 			recordedCommands.push({ kind: 'fadeIn', seconds });
