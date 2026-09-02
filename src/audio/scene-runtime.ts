@@ -3,6 +3,8 @@ import type { StoreApi } from 'zustand/vanilla';
 import type { AudioBackend } from './audio-backend';
 
 import type { PlaybackState } from './playback-state';
+
+import type { Scene } from '@/scenes/scene';
 import { createStore } from 'zustand/vanilla';
 
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
@@ -39,7 +41,7 @@ function assertNever(value: never): never {
 	throw new Error(`unreachable playback state: ${JSON.stringify(value)}`);
 }
 
-export function createSceneRuntime(backend: AudioBackend): SceneRuntime {
+export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRuntime {
 	const store = createStore<RuntimeState>()(() => ({ playback: idle }));
 
 	async function start(): Promise<StartResult> {
@@ -65,7 +67,7 @@ export function createSceneRuntime(backend: AudioBackend): SceneRuntime {
 					// here would leave the state on `starting` forever: the caller
 					// discards this promise, so nothing would surface, and every later
 					// press would be turned away as `already-starting`.
-					backend.start();
+					backend.start(scene);
 					backend.fadeIn(FADE_IN_SECONDS);
 				}
 				catch (error) {

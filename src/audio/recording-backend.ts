@@ -1,4 +1,5 @@
 import type { AudioBackend } from './audio-backend';
+import type { Scene } from '@/scenes/scene';
 
 // This is the second implementation of the seam. A seam with one implementation
 // is hypothetical; with two, the seam is real. The command list is the
@@ -7,7 +8,7 @@ import type { AudioBackend } from './audio-backend';
 
 export type BackendCommand
 	= | { kind: 'resume' }
-		| { kind: 'start' }
+		| { kind: 'start'; scene: string }
 		| { kind: 'fadeIn'; seconds: number }
 		| { kind: 'fadeOut'; seconds: number }
 		| { kind: 'stop'; afterSeconds: number };
@@ -66,8 +67,11 @@ export function createRecordingBackend(
 				throw new Error('AudioContext is suspended rather than running');
 			}
 		},
-		start: (): void => {
-			recordedCommands.push({ kind: 'start' });
+		start: (scene: Scene): void => {
+			// The command carries the scene id rather than the full object,
+			// since the command list exists to be toEqual'd and a function-bearing
+			// object would make that brittle.
+			recordedCommands.push({ kind: 'start', scene: scene.id });
 			if (startFails()) {
 				throw new Error('OscillatorNode could not be constructed');
 			}

@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import HomePage from './page';
 
-// The page now pulls in the client toggle, which imports Tone.js. jsdom has no
-// AudioContext, so the audio module is swapped out wholesale rather than
-// stubbing Web Audio itself.
-vi.mock('@/audio/tone-backend', async () => {
+// The page pulls in the client toggle, which imports the runtime module, and
+// that module now imports both Tone.js and Ember. jsdom has no
+// AudioContext, so the whole runtime module is swapped for a fake-backed,
+// silent-Scene one rather than stubbing Web Audio itself.
+vi.mock('@/audio/runtime', async () => {
 	const { createRecordingBackend } = await import('@/audio/recording-backend');
-	return { createToneBackend: createRecordingBackend };
+	const { createSceneRuntime } = await import('@/audio/scene-runtime');
+	const { createSilentScene } = await import('@/scenes/silent-scene');
+	return { sceneRuntime: createSceneRuntime(createRecordingBackend(), createSilentScene('silent')) };
 });
 
 // This is the seam that stops the suite from passing on zero tests.
