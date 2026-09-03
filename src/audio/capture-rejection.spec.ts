@@ -15,10 +15,20 @@ describe('reasonForCaptureError', (): void => {
 		expect(reasonForCaptureError(new DOMException('no device', 'NotFoundError'))).toBe('no-microphone');
 	});
 
-	it('maps OverconstrainedError to no-microphone', (): void => {
+	// Not no-microphone: a device answered and was rejected only because it could
+	// not meet a constraint this seam asked for, so telling the listener to plug
+	// one in would be wrong when one is already plugged in.
+	it('maps OverconstrainedError to unavailable', (): void => {
 		expect(reasonForCaptureError(new DOMException('constraints unmet', 'OverconstrainedError'))).toBe(
-			'no-microphone',
+			'unavailable',
 		);
+	});
+
+	// ADR 0004: `getUserMedia` rejects with this name on iOS while the audio
+	// session is still `playback`, which is every session until #15 lands the
+	// switch to `play-and-record`.
+	it('maps InvalidStateError to unavailable', (): void => {
+		expect(reasonForCaptureError(new DOMException('wrong session type', 'InvalidStateError'))).toBe('unavailable');
 	});
 
 	it('maps NotReadableError to busy', (): void => {

@@ -10,8 +10,19 @@ export function reasonForCaptureError(error: unknown): ListeningRejectionReason 
 		case 'SecurityError':
 			return 'refused';
 		case 'NotFoundError':
-		case 'OverconstrainedError':
 			return 'no-microphone';
+		// Not no-microphone: a device answered and was rejected only because it
+		// could not meet a constraint this seam asked for. `no-microphone` tells
+		// the listener to plug one in, which is wrong when one is already there.
+		//
+		// iOS raises InvalidStateError for the same reason: `getUserMedia` rejects
+		// outright while the audio session is still `playback`, which is every
+		// session until #15 lands the switch to `play-and-record`. `unavailable`
+		// reads as "not yet on this device" rather than blaming a microphone the
+		// switch never reached.
+		case 'OverconstrainedError':
+		case 'InvalidStateError':
+			return 'unavailable';
 		case 'NotReadableError':
 		case 'AbortError':
 			return 'busy';
