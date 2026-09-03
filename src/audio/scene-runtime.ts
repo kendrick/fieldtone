@@ -9,7 +9,7 @@ import type { ParameterSchema, ParameterValues } from '@/scenes/parameters';
 import type { Scene } from '@/scenes/scene';
 import { createStore } from 'zustand/vanilla';
 
-import { clampSignalValue, defaultSignalValues, modulatedParameterValue } from '@/scenes/control-signals';
+import { clampSignalValue, defaultSignalValues, signalOffset } from '@/scenes/control-signals';
 import { deserializeParameterValues, serializeParameterValues } from '@/scenes/parameter-serialization';
 import { clampParameterValue, defaultParameterValues } from '@/scenes/parameters';
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
@@ -81,25 +81,40 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 	// a share link.
 	function effectiveParameters(): ParameterValues {
 		const { parameters, signals } = store.getState();
-		const combined: Record<string, number> = { ...parameters };
+		// Two passes rather than one, so that several signals bound to one parameter
+		// sum their offsets and the total is clamped once. Clamping inside the loop
+		// instead made the result depend on Object.entries order: a signal that
+		// saturated the parameter at its ceiling swallowed a later one pulling back
+		// down, so two schemas differing only in key order drove different values.
+		// Addition is commutative and the single clamp is applied to the sum, which
+		// is what makes the combined value independent of declaration order.
+		const offsets = new Map<string, number>();
 
 		for (const [name, signal] of Object.entries(scene.controlSignals)) {
-			const declaration = scene.parameters[signal.parameter];
-			// noUncheckedIndexedAccess types all three reads as possibly undefined,
-			// and one of them is a real case: a signal is free to name a parameter its
-			// Scene never declared. There is no min or max to clamp that against, so
-			// the only safe move is to drive nothing.
-			const listenerValue = combined[signal.parameter];
 			const signalValue = signals[name];
 
-			if (declaration === undefined || listenerValue === undefined || signalValue === undefined) {
+			// noUncheckedIndexedAccess types both reads as possibly undefined, and the
+			// parameter lookup is a real case: a signal is free to name a parameter its
+			// Scene never declared. There is no min or max to clamp that against, so
+			// the only safe move is to drive nothing.
+			if (signalValue === undefined || scene.parameters[signal.parameter] === undefined) {
 				continue;
 			}
 
-			// Reading back out of `combined` rather than out of `parameters`, so two
-			// signals bound to one parameter stack their offsets instead of the last
-			// one silently winning.
-			combined[signal.parameter] = modulatedParameterValue(declaration, listenerValue, signal, signalValue);
+			offsets.set(signal.parameter, (offsets.get(signal.parameter) ?? 0) + signalOffset(signal, signalValue));
+		}
+
+		const combined: Record<string, number> = { ...parameters };
+
+		for (const [parameterName, offset] of offsets) {
+			const declaration = scene.parameters[parameterName];
+			const listenerValue = combined[parameterName];
+
+			if (declaration === undefined || listenerValue === undefined) {
+				continue;
+			}
+
+			combined[parameterName] = clampParameterValue(declaration, listenerValue + offset);
 		}
 
 		return combined;

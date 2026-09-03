@@ -55,11 +55,20 @@ export function clampSignalValue(value: number): number {
 	return Math.min(1, Math.max(0, value));
 }
 
-// The offset is measured from the signal's rest value, not from zero, which is
-// what lets a Control Signal move a parameter away from where the listener set
-// it without overwriting their setting: at rest the listener's value comes back
-// untouched, whatever they dragged it to.
+// Measured from the signal's rest value, not from zero, which is what lets a
+// Control Signal move a parameter away from where the listener set it without
+// overwriting their setting: at rest this is 0 and the listener's value comes
+// back untouched, whatever they dragged it to.
 //
+// Unclamped on purpose. An offset is only half an answer, and clamping each one
+// separately is what made stacking order-dependent: with two signals on one
+// parameter, a first offset that saturated at the ceiling swallowed a second
+// offset that pulled back down, so the result depended on schema key order.
+// Offsets sum, then the total is clamped once.
+export function signalOffset(signal: ControlSignalDeclaration, signalValue: number): number {
+	return (signalValue - signal.default) * signal.reach;
+}
+
 // Clamping against the parameter is not belt-and-braces. A Scene picks a reach
 // that stays in range from the parameter's default, but the listener may have
 // already pushed the slider to the ceiling, and ADR 0004 records that a signal
@@ -71,5 +80,5 @@ export function modulatedParameterValue(
 	signal: ControlSignalDeclaration,
 	signalValue: number,
 ): number {
-	return clampParameterValue(parameter, listenerValue + (signalValue - signal.default) * signal.reach);
+	return clampParameterValue(parameter, listenerValue + signalOffset(signal, signalValue));
 }

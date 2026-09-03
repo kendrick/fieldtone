@@ -548,4 +548,59 @@ describe('scene runtime control signals', (): void => {
 			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
 		]);
 	});
+
+	// Two signals on one parameter is the case the combining rule exists for, and
+	// nothing shipped exercises it: Ember declares one. These two schemas are the
+	// same pair of signals in the opposite declaration order, driven identically.
+	// Before offsets were summed the result differed between them, because the
+	// first offset saturated the clamp and the second had nothing left to pull
+	// back down from.
+	function createTwoSignalScene(reversed: boolean): Scene {
+		const lift: ControlSignalDeclaration = { parameter: 'level', default: 0, reach: 1 };
+		const drop: ControlSignalDeclaration = { parameter: 'level', default: 0, reach: -0.5 };
+		return createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			reversed ? { drop, lift } : { lift, drop },
+		);
+	}
+
+	async function driveBothSignals(reversed: boolean): Promise<number | undefined> {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createTwoSignalScene(reversed));
+
+		await runtime.start();
+		backend.emitSignal('lift', 1);
+		backend.emitSignal('drop', 1);
+
+		return backend.commands.filter(command => command.kind === 'setParameter').at(-1)?.value;
+	}
+
+	it('sums the offsets of two signals on one parameter, whatever order they are declared in', async (): Promise<void> => {
+		// 0.5 + 1 - 0.5 = 1.0, which the clamp leaves alone at the parameter's max.
+		expect(await driveBothSignals(false)).toBe(1);
+		expect(await driveBothSignals(true)).toBe(1);
+	});
+
+	it('holds a summed overshoot at the ceiling and leaves the listener value alone', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		// Each signal alone already lifts past the ceiling, so the sum is far past it.
+		// The parameter still lands exactly on max, and the store still holds what the
+		// listener set, which is the separation the whole modulation layer exists for.
+		const runtime = createSceneRuntime(backend, createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			{
+				one: { parameter: 'level', default: 0, reach: 4 },
+				two: { parameter: 'level', default: 0, reach: 4 },
+			},
+		));
+
+		await runtime.start();
+		backend.emitSignal('one', 1);
+		backend.emitSignal('two', 1);
+
+		expect(backend.commands.filter(command => command.kind === 'setParameter').at(-1)?.value).toBe(1);
+		expect(runtime.store.getState().parameters).toEqual({ level: 0.5 });
+	});
 });
