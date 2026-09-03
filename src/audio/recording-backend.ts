@@ -51,6 +51,14 @@ export type CommandOutcome = 'succeed' | 'fail' | 'fail-once';
 // than adding a `-once` variant of each; see there for why.
 export type ListeningOutcome = 'succeed' | ListeningRejectionReason;
 
+// The two answers no second press can change, enforced rather than left to
+// whoever writes the sequence. A browser told no remembers it and never prompts
+// again, and a platform that cannot capture at all stays that way for the life
+// of the page. The Invitation agrees from the other side: `worthAnotherPress`
+// lists only the two hardware reasons, so for these two the button is already
+// gone and there is no second press to model.
+const permanentReasons: readonly ListeningOutcome[] = ['refused', 'unavailable'];
+
 export interface RecordingBackendOptions {
 	resume?: CommandOutcome;
 	// Everything after resume is real Web Audio work in the Tone adapter:
@@ -67,7 +75,9 @@ export interface RecordingBackendOptions {
 	// second. A `-once` suffix per transient reason was the other shape on offer,
 	// but ListeningOutcome is a five-way choice already, and a `-once` variant of
 	// each transient reason would grow the union and leave an awkward question
-	// for the permanent half: does `refused-once` exist?
+	// for the permanent half: does `refused-once` exist? A sequence cannot talk
+	// its way out of `refused` or `unavailable` either way—see `permanentReasons`
+	// above for the latch that holds those, and why it is a latch.
 	listening?: ListeningOutcome | readonly ListeningOutcome[];
 }
 
@@ -106,6 +116,13 @@ export function createRecordingBackend(
 		? ['succeed']
 		: Array.isArray(options.listening) ? options.listening : [options.listening];
 	let listeningAttempt = 0;
+	// Set the first time the sequence yields a permanent answer, and from then on
+	// it outranks whatever the sequence says next. A latch rather than a check on
+	// the array up front, because the same shape still has to serve
+	// `['no-microphone', 'refused']`—plug a microphone in, then deny the prompt—so
+	// the rule is about the order answers arrive in, not about which ones may
+	// appear.
+	let latchedOutcome: ListeningOutcome | undefined;
 
 	return {
 		get commands(): readonly BackendCommand[] {
@@ -154,7 +171,10 @@ export function createRecordingBackend(
 			// listeningOutcomes always holds at least one entry, so this index is
 			// always in range; the fallback exists only to satisfy
 			// noUncheckedIndexedAccess without reaching for `as`.
-			const outcome = listeningOutcomes[index] ?? 'succeed';
+			const outcome = latchedOutcome ?? listeningOutcomes[index] ?? 'succeed';
+			if (permanentReasons.includes(outcome)) {
+				latchedOutcome = outcome;
+			}
 			if (outcome !== 'succeed') {
 				throw new ListeningRejection(outcome);
 			}
