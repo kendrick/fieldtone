@@ -1,19 +1,16 @@
 <!--
   Sync Impact Report
-  Version change: 1.1.0 → 1.2.0 (MINOR)
+  Version change: 1.2.0 → 1.3.0 (MINOR)
   Modified principles:
-    - I. Privacy & Security: the bounded in-memory audio buffer MUST
-      now be zeroed whenever Listening suspends, not only when the
-      audio session ends
+    - VI. Browser Compatibility: the iOS Safari floor rises to 18,
+      and a new bullet records that background Web Audio playback
+      is what sets it
   Added sections: none
   Removed sections: none
-  Version rationale: the new clause tightens what a NON-NEGOTIABLE
-    principle demands, which Governance counts as a material
-    expansion rather than a clarification. ADR 0004 introduced a
-    state the old wording never anticipated: Listening suspends when
-    the app is backgrounded while playback continues, and "MUST NOT
-    outlive the audio session" left open whether captured audio may
-    sit in memory through it.
+  Version rationale: the threshold carve-out in Governance makes a
+    numeric floor change MINOR. Principle VI's intent is unchanged:
+    it still asks for browsers from the last 2 years, and the old
+    floor dated to March 2023, well outside that window.
   Templates requiring updates:
     - plan-template.md ✅ no change needed (Constitution Check is dynamic)
     - spec-template.md ✅ no change needed
@@ -95,9 +92,15 @@ Principle I outranks every other.
 ### VI. Browser Compatibility
 
 - Target browsers released within the last 2 years
-- MUST support: iOS Safari 16.4+, Chrome Android (latest 2 major
+- MUST support: iOS Safari 18+, Chrome Android (latest 2 major
   versions), modern desktop browsers (Chrome, Firefox, Safari,
   Edge — latest 2 major versions each)
+- Background Web Audio playback sets the iOS floor. Keeping an
+  AudioContext alive once the app is backgrounded needs
+  `navigator.audioSession.type`, and that reached users around
+  iOS 17.5. Below that version the Bed stops as soon as a
+  listener switches away, so lowering this floor ships an app
+  that falls silent in their pocket (see ADR 0004)
 - Progressive enhancement: core audio features work without
   motion sensors; enhanced reactivity when sensors are available
 - Graceful degradation for unsupported Web Audio features with
@@ -171,4 +174,4 @@ Principle I outranks every other.
   and the constitution stops getting amended.
 - When principles conflict, resolve by priority order (I highest).
 
-**Version**: 1.2.0 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-09-02
+**Version**: 1.3.0 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-09-02
