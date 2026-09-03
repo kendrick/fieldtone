@@ -25,5 +25,6 @@ describe('home page', () => {
 		expect(markup).toContain('Play');
 		expect(markup).toContain('Space');
 		expect(markup).toContain('Brightness');
+		expect(markup).toContain('Share this Scene');
 	});
 });
