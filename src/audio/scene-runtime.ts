@@ -52,7 +52,7 @@ export type StopResult = { ok: true } | { ok: false; reason: 'not-playing' };
 // union rather than unpacking a nested result to find out the browser said no.
 export type StartListeningResult
 	= { ok: true }
-		| { ok: false; reason: 'not-playing' | 'already-opening' | 'already-listening' | ListeningRejectionReason };
+		| { ok: false; reason: 'not-playing' | 'session-ended' | 'already-opening' | 'already-listening' | ListeningRejectionReason };
 
 export type StopListeningResult = { ok: true } | { ok: false; reason: 'not-listening' };
 
@@ -93,6 +93,15 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		// first press happens long before anything is listening.
 		signals: defaultSignalValues(scene.controlSignals),
 	}));
+
+	// Which playback session is current, bumped once per session that reaches
+	// `playing`. An awaited getUserMedia outlives the press that asked for it, and
+	// the playback status alone cannot tell "the same Bed is still playing" from
+	// "the listener stopped and started a new one": both read `playing`. Without
+	// this counter a grant arriving after stop-then-play completes into a session
+	// that never accepted anything, which is the acceptance Principle I asks for
+	// arriving in the wrong session.
+	let playbackGeneration = 0;
 
 	// The one place the listener's values and the signals' readings meet.
 	// Everything upstream holds them apart, and a value combines only on its way
@@ -174,6 +183,7 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 					return { ok: false, reason: 'audio-unavailable' };
 				}
 
+				playbackGeneration += 1;
 				store.setState({ playback: completeStart(starting) });
 				return { ok: true };
 			}
@@ -204,6 +214,9 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 			case 'not-listening':
 			case 'refused': {
 				const opening = beginOpening(state);
+				// Read before the await, compared after it. This is the session the
+				// listener accepted in, and the only one the microphone may open into.
+				const generation = playbackGeneration;
 				store.setState({ listening: opening });
 
 				// Held rather than acted on, so both outcomes reach the playback
@@ -228,17 +241,29 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 				// recording indicator behind silence, which is exactly what the
 				// stopListening() call inside stop() exists to prevent and what
 				// Principle I forbids outright.
-				if (store.getState().playback.status !== 'playing') {
+				//
+				// Two ways to be orphaned, and the generation is the one the status
+				// misses: a listener who stops, presses play again, and only then
+				// answers the prompt leaves a session reading `playing` that never
+				// accepted anything. An if-chain rather than one condition, so each
+				// exit reports the reason that is actually true.
+				let orphaned: 'not-playing' | 'session-ended' | undefined;
+
+				if (playbackGeneration !== generation) {
+					orphaned = 'session-ended';
+				}
+				else if (store.getState().playback.status !== 'playing') {
+					orphaned = 'not-playing';
+				}
+
+				if (orphaned !== undefined) {
 					// Called on the refused path too, not just the granted one. The seam
 					// documents it as a no-op when no microphone is open, so the cost is
 					// nothing and one exit from a race is easier to trust than two that
 					// differ only where the difference cannot be observed.
 					backend.stopListening();
 					store.setState({ listening: abandonOpening(opening) });
-					// The existing reason rather than a new one: from here the outcome is
-					// the same as accepting before pressing play. There is no Bed to
-					// listen alongside.
-					return { ok: false, reason: 'not-playing' };
+					return { ok: false, reason: orphaned };
 				}
 
 				if (rejection !== undefined) {

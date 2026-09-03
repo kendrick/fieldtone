@@ -821,4 +821,39 @@ describe('scene runtime listening', (): void => {
 			{ kind: 'stopListening' },
 		]);
 	});
+
+	// The case the playback status cannot catch on its own. Stop, then play again,
+	// and the runtime is back to `playing` while the first prompt is still up: a
+	// grant landing now would open the microphone in a session nobody accepted it
+	// in, with the Invitation still offering the button that would have asked.
+	// Holding the grant by hand is the only way to reach it, because the fake
+	// otherwise resolves before the second press can land.
+	it('abandons a grant that arrives after the listener stopped and started again', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		let grantMicrophone: () => void = (): void => {};
+		const prompt = new Promise<void>((resolve): void => {
+			grantMicrophone = resolve;
+		});
+		// Spread rather than a hand-rolled fake, so every command except the held
+		// one still reaches the recorder.
+		const runtime = createSceneRuntime({ ...backend, startListening: (): Promise<void> => prompt }, silentScene);
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		runtime.stop();
+		await runtime.start();
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+
+		grantMicrophone();
+		const result = await accepting;
+
+		expect(result).toEqual({ ok: false, reason: 'session-ended' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		// Still playing: the second session is untouched by an attempt that belonged
+		// to the first, which is the whole point of turning the grant away here.
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+		// The microphone the browser just handed over is closed rather than left
+		// live behind a session that never asked for it.
+		expect(backend.commands.at(-1)).toEqual({ kind: 'stopListening' });
+	});
 });
