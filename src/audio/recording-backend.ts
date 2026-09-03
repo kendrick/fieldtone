@@ -1,4 +1,4 @@
-import type { AudioBackend } from './audio-backend';
+import type { AudioBackend, SignalListener } from './audio-backend';
 import type { ParameterValues } from '@/scenes/parameters';
 import type { Scene } from '@/scenes/scene';
 
@@ -6,6 +6,11 @@ import type { Scene } from '@/scenes/scene';
 // is hypothetical; with two, the seam is real. The command list is the
 // runtime's observable output, so tests assert on the sequence instead of
 // reaching into Tone.js.
+//
+// `onSignal` is the same story a second time: a listener with nothing to call
+// it is still hypothetical. `emitSignal` below is what makes the upward
+// channel real, and it is how every test in this feature drives Listening-shaped
+// behavior — no microphone, no AudioWorklet, no AudioContext, just a call.
 
 export type BackendCommand
 	= | { kind: 'resume' }
@@ -17,6 +22,12 @@ export type BackendCommand
 
 export interface RecordingBackend extends AudioBackend {
 	readonly commands: readonly BackendCommand[];
+	// Drives the upward channel from a test, standing in for Listening deriving
+	// a Control Signal. It is input to the runtime rather than output from it,
+	// so unlike every method above it has no BackendCommand variant and never
+	// touches `commands` — recording it would make the runtime's own output log
+	// include something the runtime never asked for.
+	emitSignal: (name: string, value: number) => void;
 }
 
 // `fail-once` is what lets a test watch a runtime recover: the command throws on
@@ -58,6 +69,11 @@ export function createRecordingBackend(
 	const resumeFails = failureGate(options.resume);
 	const startFails = failureGate(options.start);
 	const fadeInFails = failureGate(options.fadeIn);
+	// A Set rather than an array so a listener that unsubscribes mid-emit (a
+	// Scene tearing itself down inside its own handler) can't corrupt whatever
+	// loop is iterating it, and so double-subscribing the same function is a
+	// no-op instead of a double call.
+	const signalListeners = new Set<SignalListener>();
 
 	return {
 		get commands(): readonly BackendCommand[] {
@@ -96,6 +112,17 @@ export function createRecordingBackend(
 		},
 		stop: (afterSeconds: number): void => {
 			recordedCommands.push({ kind: 'stop', afterSeconds });
+		},
+		onSignal: (listener: SignalListener): (() => void) => {
+			signalListeners.add(listener);
+			return (): void => {
+				signalListeners.delete(listener);
+			};
+		},
+		emitSignal: (name: string, value: number): void => {
+			for (const listener of signalListeners) {
+				listener(name, value);
+			}
 		},
 	};
 }

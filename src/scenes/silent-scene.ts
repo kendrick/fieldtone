@@ -1,3 +1,4 @@
+import type { ControlSignalSchema } from './control-signals';
 import type { ParameterSchema } from './parameters';
 import type { Scene } from './scene';
 
@@ -7,12 +8,18 @@ import type { Scene } from './scene';
 // which is what lets a spec run under jsdom, where there is no AudioContext to
 // build into.
 
-// The schema is a parameter so a spec can give this Scene whatever parameters
-// the case under test needs, rather than asserting against one baked-in set.
-export function createSilentScene(id: string, schema: ParameterSchema = {}): Scene {
+// Both schemas are arguments so a spec can hand this Scene whatever parameters
+// and Control Signals the case under test needs, rather than asserting against
+// one baked-in set. They default to empty because most specs want neither.
+export function createSilentScene(
+	id: string,
+	schema: ParameterSchema = {},
+	controlSignals: ControlSignalSchema = {},
+): Scene {
 	return {
 		id,
 		parameters: schema,
+		controlSignals,
 		bed: (_host) => {
 			return {
 				stop: () => {},

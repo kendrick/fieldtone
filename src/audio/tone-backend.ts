@@ -1,4 +1,4 @@
-import type { AudioBackend } from './audio-backend';
+import type { AudioBackend, SignalListener } from './audio-backend';
 import type { ParameterValues } from '@/scenes/parameters';
 import type { BedHandle, Scene } from '@/scenes/scene';
 import * as Tone from 'tone';
@@ -124,6 +124,11 @@ export function createToneBackend(): ToneBackend {
 	// reason: the offline probe then measures what the listener has rather than
 	// the Scene's defaults, which is the difference between an oracle and a demo.
 	let currentParameters: ParameterValues = {};
+	// Registration only, for now: nothing in this file ever calls a listener.
+	// Deriving a Control Signal from Listening and emitting it is the next
+	// ticket (#27); this set is what that ticket's emission lands against
+	// without the subscribe side changing too.
+	const signalListeners = new Set<SignalListener>();
 
 	function readOutputLevel(): number {
 		if (output === undefined) {
@@ -255,5 +260,12 @@ export function createToneBackend(): ToneBackend {
 		}, afterSeconds + DISPOSE_GRACE_SECONDS);
 	}
 
-	return { resume, start, setParameter, fadeIn, fadeOut, stop, probe };
+	function onSignal(listener: SignalListener): () => void {
+		signalListeners.add(listener);
+		return (): void => {
+			signalListeners.delete(listener);
+		};
+	}
+
+	return { resume, start, setParameter, fadeIn, fadeOut, stop, onSignal, probe };
 }

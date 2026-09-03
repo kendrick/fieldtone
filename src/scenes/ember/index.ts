@@ -2,6 +2,7 @@ import type { BedHandle, BedHost, Scene } from '../scene';
 import type { Voice } from './voicing';
 import * as Tone from 'tone';
 import { resolveParameterValue } from '../parameters';
+import { emberControlSignals } from './control-signals';
 import { emberParameters } from './parameters';
 import { drawVoicing } from './voicing';
 
@@ -164,5 +165,6 @@ function buildBed(host: BedHost): BedHandle {
 export const ember: Scene = {
 	id: 'ember',
 	parameters: emberParameters,
+	controlSignals: emberControlSignals,
 	bed: buildBed,
 };
