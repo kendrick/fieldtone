@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Each git worktree runs its own preview server, so a hardcoded port would let
+// two worktrees collide on 3000. E2E_PORT lets each worktree claim its own.
+const port = Number(process.env.E2E_PORT ?? 3000);
+
 export default defineConfig({
 	testDir: 'tests/integration',
 	fullyParallel: true,
@@ -7,7 +11,7 @@ export default defineConfig({
 	retries: process.env.CI ? 2 : 0,
 	reporter: process.env.CI ? 'github' : 'list',
 	use: {
-		baseURL: 'http://localhost:3000/fieldtone/',
+		baseURL: `http://localhost:${port}/fieldtone/`,
 		trace: 'on-first-retry',
 	},
 	webServer: {
@@ -16,8 +20,12 @@ export default defineConfig({
 		// Requires pnpm build to have run first; a stale or missing out/ otherwise
 		// gives a misleading test result.
 		command: 'pnpm preview',
-		port: 3000,
-		reuseExistingServer: !process.env.CI,
+		port,
+		// Default to off, not !CI: an orphaned `serve` from a dead session once
+		// held port 3000 for two hours returning 404 for /fieldtone/, and the
+		// suite kept passing against it because reuse silently adopted it. Opt
+		// in per-run with E2E_REUSE_SERVER=1 when reuse is actually wanted.
+		reuseExistingServer: process.env.E2E_REUSE_SERVER === '1',
 		timeout: 120_000,
 	},
 	// Mobile-first matrix. CI passes explicit --project flags to run only
