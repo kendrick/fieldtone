@@ -24,7 +24,9 @@ test.describe('listen invitation refused', () => {
 		await page.getByRole('button', { name: 'Play' }).click();
 		await page.getByRole('button', { name: 'Let it listen' }).click();
 
-		await expect(page.getByRole('status')).toHaveText(
+		// Scoped for the reason listening.spec.ts gives: the share control has a
+		// status region too, and only the floor's belongs to the Invitation.
+		await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
 			'Your browser is holding on to that answer, so FieldTone cannot ask again. Change the microphone permission for this site in your browser settings.',
 		);
 
