@@ -3,7 +3,7 @@ import type { ParameterValues } from '@/scenes/parameters';
 import type { BedHandle, Scene } from '@/scenes/scene';
 import * as Tone from 'tone';
 import { ListeningRejection } from './audio-backend';
-import { requestPlaybackSession, requestRecordSession } from './audio-session';
+import { needsRecordSession, requestPlaybackSession, requestRecordSession } from './audio-session';
 import { reasonForCaptureError } from './capture-rejection';
 
 // Every Tone.js call in the app lives here: this is the one AudioBackend that
@@ -263,11 +263,13 @@ export function createToneBackend(): ToneBackend {
 		if (navigator.mediaDevices?.getUserMedia === undefined) {
 			throw new ListeningRejection('unavailable');
 		}
-		// The voice this fade is spent on, pinned before the wait. Only Safari has an
-		// audio session to switch, so on every desktop browser this is undefined and
-		// the transition below collapses to the getUserMedia call that shipped before
-		// it—which is why the Chromium suite never sees a fade.
-		const faded = navigator.audioSession !== undefined ? voice : undefined;
+		// The voice this fade is spent on, pinned before the wait. The fade exists to
+		// cover a session switch, so it runs only where one is about to happen: no audio
+		// session at all (every desktop browser, which is why the Chromium suite never
+		// sees a fade) and one already on `play-and-record` both mean no dropout to
+		// cover, and the transition below collapses to the getUserMedia call that
+		// shipped before it.
+		const faded = needsRecordSession() ? voice : undefined;
 		if (faded !== undefined) {
 			faded.envelope.gain.rampTo(0, SESSION_FADE_SECONDS);
 			await new Promise<void>((resolve) => {
@@ -281,7 +283,8 @@ export function createToneBackend(): ToneBackend {
 		// Outside the fade, because iOS requires the switch and the fade only covers
 		// it: `getUserMedia` rejects outright while the session is still `playback`
 		// (ADR 0004), and a Bed that is not playing has nothing to fade but still
-		// needs the session moved. A no-op where there is no audio session.
+		// needs the session moved. A no-op where there is no audio session, and where
+		// the switch already happened.
 		//
 		// Putting the fade ahead of this bets that the tap's transient activation
 		// outlives 300ms. The HTML spec sizes that window in seconds and nothing has
