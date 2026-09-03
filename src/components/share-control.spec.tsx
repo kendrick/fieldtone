@@ -71,6 +71,7 @@ describe('share-control', () => {
 		render(<ShareControl runtime={runtime} />);
 
 		expect(screen.getByRole('status').textContent).toBe('');
+		expect(screen.queryByRole('textbox')).toBeNull();
 	});
 
 	it('hands a total link to the share sheet where the browser has one', async () => {
@@ -111,14 +112,39 @@ describe('share-control', () => {
 		expect(screen.getByRole('status').textContent).toBe('Link copied');
 	});
 
-	it('points at the address bar when the clipboard refuses', async () => {
+	it('hands over the link itself when the clipboard refuses', async () => {
 		stubWriteText(vi.fn().mockRejectedValue(new Error('denied')));
 		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
 		render(<ShareControl runtime={runtime} />);
 
 		await press();
 
-		expect(screen.getByRole('status').textContent).toBe('Couldn\'t copy the link. Copy it from the address bar instead.');
+		expect(screen.getByRole('status').textContent).toBe('Couldn\'t copy the link. Select it from the field below.');
+		// The address bar is empty until a control moves, so pointing at it would
+		// hand back the bare `/` this whole feature exists to replace. The field
+		// carries the total link instead, and it has to be the same one the
+		// clipboard was offered.
+		const field = screen.getByRole('textbox', { name: 'Link to this Scene' });
+		expect(field).toBeInstanceOf(HTMLInputElement);
+		expectTotalLink((field as HTMLInputElement).value, runtime);
+		expect((field as HTMLInputElement).readOnly).toBe(true);
+	});
+
+	it('takes the field back once a press succeeds', async () => {
+		const writeText = vi.fn().mockRejectedValueOnce(new Error('denied')).mockResolvedValue(undefined);
+		stubWriteText(writeText);
+		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
+		render(<ShareControl runtime={runtime} />);
+
+		await press();
+		expect(screen.queryByRole('textbox', { name: 'Link to this Scene' })).not.toBeNull();
+
+		await press();
+
+		// AC 7: nothing the failure put on screen may outlive it. The message
+		// fades on its own, and the field goes the moment it has no job left.
+		expect(screen.queryByRole('textbox', { name: 'Link to this Scene' })).toBeNull();
+		expect(screen.getByRole('status').textContent).toBe('Link copied');
 	});
 
 	it('says nothing when the listener dismisses the share sheet', async () => {
