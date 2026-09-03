@@ -39,11 +39,25 @@ export interface RecordingBackend extends AudioBackend {
 // sound. `fail` never relents.
 export type CommandOutcome = 'succeed' | 'fail' | 'fail-once';
 
-// No `fail-once` counterpart here, deliberately. A browser that was told no
-// remembers the answer, so a second accept gets the same one back without
-// another prompt; a fake that relented on the retry would let a test pass
-// against behavior no listener can reach.
+// `fail-once` on CommandOutcome works because CommandOutcome is a coin flip:
+// succeed or fail, so "fail then succeed" needs one bit of memory. Listening is
+// a five-way choice, and two of its outcomes are not a coin a retry can flip.
+// `refused` and `unavailable` are answers the browser (or the hardware) gives
+// once and keeps, so a fake that let either relent on a second accept would let
+// a test pass against behavior no listener can reach. `no-microphone` and
+// `busy` describe hardware, not a remembered answer—a microphone gets
+// plugged in, another app lets one go—so they can differ between one press
+// and the next. `listening` below sequences outcomes to model that, rather
+// than adding a `-once` variant of each; see there for why.
 export type ListeningOutcome = 'succeed' | ListeningRejectionReason;
+
+// The two answers no second press can change, enforced rather than left to
+// whoever writes the sequence. A browser told no remembers it and never prompts
+// again, and a platform that cannot capture at all stays that way for the life
+// of the page. The Invitation agrees from the other side: `worthAnotherPress`
+// lists only the two hardware reasons, so for these two the button is already
+// gone and there is no second press to model.
+const permanentReasons: readonly ListeningOutcome[] = ['refused', 'unavailable'];
 
 export interface RecordingBackendOptions {
 	resume?: CommandOutcome;
@@ -55,8 +69,16 @@ export interface RecordingBackendOptions {
 	fadeIn?: CommandOutcome;
 	// Named by outcome rather than by a boolean, so a case reads as the answer the
 	// listener would get: `{ listening: 'no-microphone' }` is the laptop with no
-	// microphone attached.
-	listening?: ListeningOutcome;
+	// microphone attached. An array sequences one outcome per startListening call,
+	// the final entry repeating once it runs out—`['no-microphone', 'succeed']`
+	// is a laptop with no microphone on the first press and one plugged in by the
+	// second. A `-once` suffix per transient reason was the other shape on offer,
+	// but ListeningOutcome is a five-way choice already, and a `-once` variant of
+	// each transient reason would grow the union and leave an awkward question
+	// for the permanent half: does `refused-once` exist? A sequence cannot talk
+	// its way out of `refused` or `unavailable` either way—see `permanentReasons`
+	// above for the latch that holds those, and why it is a latch.
+	listening?: ListeningOutcome | readonly ListeningOutcome[];
 }
 
 function failureGate(outcome: CommandOutcome = 'succeed'): () => boolean {
@@ -88,7 +110,19 @@ export function createRecordingBackend(
 	// loop is iterating it, and so double-subscribing the same function is a
 	// no-op instead of a double call.
 	const signalListeners = new Set<SignalListener>();
-	const listeningOutcome = options.listening ?? 'succeed';
+	// Normalized to an array once here so startListening below can index into it
+	// without re-checking the bare-value case on every call.
+	const listeningOutcomes: readonly ListeningOutcome[] = options.listening === undefined
+		? ['succeed']
+		: Array.isArray(options.listening) ? options.listening : [options.listening];
+	let listeningAttempt = 0;
+	// Set the first time the sequence yields a permanent answer, and from then on
+	// it outranks whatever the sequence says next. A latch rather than a check on
+	// the array up front, because the same shape still has to serve
+	// `['no-microphone', 'refused']`—plug a microphone in, then deny the prompt—so
+	// the rule is about the order answers arrive in, not about which ones may
+	// appear.
+	let latchedOutcome: ListeningOutcome | undefined;
 
 	return {
 		get commands(): readonly BackendCommand[] {
@@ -130,8 +164,19 @@ export function createRecordingBackend(
 		// plain Error would exercise the fallback branch instead of the mapping.
 		startListening: async (): Promise<void> => {
 			recordedCommands.push({ kind: 'startListening' });
-			if (listeningOutcome !== 'succeed') {
-				throw new ListeningRejection(listeningOutcome);
+			// The final entry repeats once the sequence runs out, so a test that only
+			// cares about the first press or two need not spell out every press after.
+			const index = Math.min(listeningAttempt, listeningOutcomes.length - 1);
+			listeningAttempt += 1;
+			// listeningOutcomes always holds at least one entry, so this index is
+			// always in range; the fallback exists only to satisfy
+			// noUncheckedIndexedAccess without reaching for `as`.
+			const outcome = latchedOutcome ?? listeningOutcomes[index] ?? 'succeed';
+			if (permanentReasons.includes(outcome)) {
+				latchedOutcome = outcome;
+			}
+			if (outcome !== 'succeed') {
+				throw new ListeningRejection(outcome);
 			}
 		},
 		stopListening: (): void => {

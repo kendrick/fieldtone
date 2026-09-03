@@ -641,6 +641,45 @@ describe('scene runtime listening', (): void => {
 		expect(backend.commands.slice(3)).toEqual([{ kind: 'startListening' }]);
 	});
 
+	// The fake used to make every outcome permanent, which meant nothing could
+	// prove a second press reaches the microphone after a transient refusal. A
+	// sequence is what lets a test stand in for the microphone getting plugged in
+	// between one press and the next, the way `worthAnotherPress` in the
+	// Invitation promises the listener it will.
+	it('drives a transient rejection then a grant across two presses, from one sequence', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: ['no-microphone', 'succeed'] });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const firstPress = await runtime.startListening();
+		const secondPress = await runtime.startListening();
+
+		expect(firstPress).toEqual({ ok: false, reason: 'no-microphone' });
+		expect(secondPress).toEqual({ ok: true });
+		expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+	});
+
+	// The other half of the sequence rule, and the one worth a test rather than a
+	// comment. `refused` and `unavailable` are answers that stick: the browser
+	// remembers a denial without prompting again, and the Invitation withdraws its
+	// button for both, since `worthAnotherPress` covers only the two hardware
+	// reasons. So the second press this sequence asks for is one no listener can
+	// make, and a fake that granted it would let a test pass against a journey
+	// that does not exist. The sequence is overridden rather than rejected,
+	// because the same array shape has to keep serving the transient case above.
+	it('holds a refusal permanently, whatever the rest of the sequence says', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: ['refused', 'succeed'] });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const firstPress = await runtime.startListening();
+		const secondPress = await runtime.startListening();
+
+		expect(firstPress).toEqual({ ok: false, reason: 'refused' });
+		expect(secondPress).toEqual({ ok: false, reason: 'refused' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'refused', reason: 'refused' });
+	});
+
 	// The seam promises a ListeningRejection and nothing else, but a promise is not
 	// a guarantee: an adapter bug throws a TypeError like anything else does. The
 	// listener still needs a message, and `unavailable` is the one that does not
