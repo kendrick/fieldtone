@@ -104,6 +104,11 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	const offered = playbackStatus === 'playing' || listening.status === 'listening' || listening.status === 'refused';
 
 	const isListening = listening.status === 'listening';
+	// getUserMedia is awaited, and the listener can sit in that gap for as long as
+	// they leave the browser's prompt on screen. Without a state of its own the
+	// press looked ignored: the button stayed untouched and the live region stayed
+	// empty for the whole wait.
+	const isOpening = listening.status === 'opening';
 	const rejection = listening.status === 'refused' ? listening : null;
 	const offering = rejection === null || worthAnotherPress.includes(rejection.reason);
 
@@ -151,7 +156,22 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	// than one element per message. A live region created in the same commit as
 	// its first message is routinely missed: a screen reader announces changes to
 	// regions it is already watching, so the region has to be there first.
-	const statusMessage = isListening ? 'Listening' : rejection === null ? '' : rejectionMessages[rejection.reason];
+	//
+	// An if-chain rather than a ternary chain now that `opening` has something to
+	// say: four outcomes is past what a reader can hold in one expression.
+	let statusMessage = '';
+	if (isOpening) {
+		// Not "opening the microphone", which claims more than is true: the browser
+		// may still be waiting on the listener. This covers both the prompt and a
+		// permission it already remembers.
+		statusMessage = 'Asking your browser for the microphone.';
+	}
+	else if (isListening) {
+		statusMessage = 'Listening';
+	}
+	else if (rejection !== null) {
+		statusMessage = rejectionMessages[rejection.reason];
+	}
 
 	const buttonClasses = cn(
 		'min-h-12 rounded-full border border-foreground px-6 text-sm font-medium transition-colors',
@@ -170,7 +190,17 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	}
 	else if (offering) {
 		control = (
-			<button type="button" onClick={handleAccept} className={buttonClasses}>
+			<button
+				type="button"
+				onClick={handleAccept}
+				// aria-disabled rather than disabled: a disabled button leaves the tab
+				// order, and focus is sitting on this one at the moment it would flip,
+				// which strands a keyboard listener the same way the withdrawal above
+				// did before 349e36b. The runtime turns a second press away as
+				// `already-opening`, so letting the press through costs nothing.
+				aria-disabled={isOpening || undefined}
+				className={cn(buttonClasses, isOpening && 'opacity-60')}
+			>
 				Let it listen
 			</button>
 		);

@@ -114,6 +114,30 @@ describe('listen-invitation', () => {
 	// One case per reason rather than a loop, because the two halves of each case
 	// differ: what the listener is told, and whether pressing again could change
 	// the answer.
+	// The permission prompt can sit on screen for as long as the listener leaves it
+	// there. Before this the press produced nothing visible at all, which reads as
+	// an app that ignored the button rather than one waiting on the browser.
+	it('says it is waiting while the browser decides, without stranding the press', async () => {
+		const backend = createRecordingBackend();
+		// Never resolved: the wait is the whole subject of this case.
+		const runtime = createSceneRuntime(
+			{ ...backend, startListening: (): Promise<void> => new Promise<void>((): void => {}) },
+			createSilentScene('silent'),
+		);
+		await runtime.start();
+		render(<ListenInvitation runtime={runtime} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+
+		const message = await screen.findByText(/asking your browser/i);
+		expect(message.getAttribute('role')).toBe('status');
+		// aria-disabled, not disabled: the button keeps its place in the tab order
+		// so the listener who just pressed it still has somewhere to be.
+		const button = screen.getByRole('button', { name: 'Let it listen' });
+		expect(button.getAttribute('aria-disabled')).toBe('true');
+		expect(button.hasAttribute('disabled')).toBe(false);
+	});
+
 	it('tells a refused listener to change the browser setting, and stops offering', async () => {
 		const { runtime } = await playingRuntime('refused');
 		render(<ListenInvitation runtime={runtime} />);
