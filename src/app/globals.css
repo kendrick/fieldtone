@@ -13,3 +13,44 @@
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 }
+
+/* The floor the second Invitation waits behind, as an animation delay rather
+   than a JS timer: Principle V rules out timers and polling loops, and a UI
+   concern has no business behind the audio seam. `visibility` has to be in the
+   keyframes. An element faded to zero opacity is still focusable and still
+   announced, so opacity alone would put the button in the tab order for the
+   whole delay, before anyone could see it. `both` is what holds the `from`
+   state through the delay. */
+@keyframes invitation-reveal {
+	from {
+		visibility: hidden;
+		opacity: 0;
+	}
+
+	to {
+		visibility: visible;
+		opacity: 1;
+	}
+}
+
+.invitation-floor {
+	animation: invitation-reveal 600ms ease-out var(--invitation-floor, 20s) both;
+}
+
+/* A listener who has been offered the Invitation before has already waited out
+   the floor once, and a second wait reads as the app being slow rather than
+   patient. */
+.invitation-floor[data-returning] {
+	--invitation-floor: 0s;
+}
+
+/* Duration only, never the delay. The wait is the design, the thing that makes
+   this an Invitation offered after the first one paid off, and the fade is only
+   decoration. 1ms rather than 0s, because animationend is what records that the
+   Invitation was offered and a zero-duration animation is shaky ground to stand
+   that on. */
+@media (prefers-reduced-motion: reduce) {
+	.invitation-floor {
+		animation-duration: 1ms;
+	}
+}
