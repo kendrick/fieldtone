@@ -5,7 +5,7 @@ import type { ReactElement } from 'react';
 import type { ListeningRejectionReason, ListeningState } from '@/audio/listening-state';
 
 import type { RuntimeState, SceneRuntime } from '@/audio/scene-runtime';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useStore } from 'zustand';
 
@@ -75,6 +75,7 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	const playbackStatus = useStore(runtime.store, selectPlaybackStatus);
 	const listening = useStore(runtime.store, selectListening);
 	const [returning, setReturning] = useState(false);
+	const statusRef = useRef<HTMLParagraphElement>(null);
 
 	// Ahead of the null return below, because hooks run on every render whatever
 	// this component ends up rendering.
@@ -102,6 +103,24 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	// the Bed cannot pull an outcome out from under a listener still reading it.
 	const offered = playbackStatus === 'playing' || listening.status === 'listening' || listening.status === 'refused';
 
+	const isListening = listening.status === 'listening';
+	const rejection = listening.status === 'refused' ? listening : null;
+	const offering = rejection === null || worthAnotherPress.includes(rejection.reason);
+
+	// Derived above the early return with the rest, because the effect below has
+	// to sit ahead of it like every other hook.
+	const withdrawn = rejection !== null && !offering;
+
+	// The listener pressed a button that answered by removing itself, which drops
+	// focus onto the body and leaves a keyboard or screen reader user with no
+	// place to be and nothing said. Principle II is non-negotiable, and the polite
+	// live region alone is not enough to carry an outcome nobody can reach.
+	useEffect(() => {
+		if (withdrawn) {
+			statusRef.current?.focus();
+		}
+	}, [withdrawn]);
+
 	if (!offered) {
 		return null;
 	}
@@ -118,14 +137,44 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 		runtime.stopListening();
 	}
 
-	const isListening = listening.status === 'listening';
-	const rejection = listening.status === 'refused' ? listening : null;
-	const offering = rejection === null || worthAnotherPress.includes(rejection.reason);
+	function handleReveal(): void {
+		rememberOffered();
+		// The floor is a first-visit courtesy and it has just been paid. Without
+		// this the flag only takes hold on the next page load, so a listener who
+		// presses Stop and then Play again in the same session sits through the
+		// full 20s a second time — which reads as the app being slow rather than
+		// patient, the exact thing the delay exists to avoid.
+		setReturning(true);
+	}
+
+	// One region for every outcome, empty until there is something to say, rather
+	// than one element per message. A live region created in the same commit as
+	// its first message is routinely missed: a screen reader announces changes to
+	// regions it is already watching, so the region has to be there first.
+	const statusMessage = isListening ? 'Listening' : rejection === null ? '' : rejectionMessages[rejection.reason];
 
 	const buttonClasses = cn(
 		'min-h-12 rounded-full border border-foreground px-6 text-sm font-medium transition-colors',
 		'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background',
 	);
+
+	// An if rather than a nested ternary: three outcomes, and the middle one is a
+	// state the listener can act on rather than a fallback.
+	let control: ReactElement | null = null;
+	if (isListening) {
+		control = (
+			<button type="button" onClick={handleStop} className={buttonClasses}>
+				Stop listening
+			</button>
+		);
+	}
+	else if (offering) {
+		control = (
+			<button type="button" onClick={handleAccept} className={buttonClasses}>
+				Let it listen
+			</button>
+		);
+	}
 
 	return (
 		<div
@@ -135,29 +184,14 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 			// counts down, because Principle V rules out JS timers.
 			className="invitation-floor flex flex-col items-center gap-3 text-center"
 			data-returning={returning ? '' : undefined}
-			onAnimationEnd={rememberOffered}
+			onAnimationEnd={handleReveal}
 		>
-			{isListening
-				? (
-						<>
-							<p role="status">Listening</p>
-							<button type="button" onClick={handleStop} className={buttonClasses}>
-								Stop listening
-							</button>
-						</>
-					)
-				: (
-						<>
-							{offering && (
-								<button type="button" onClick={handleAccept} className={buttonClasses}>
-									Let it listen
-								</button>
-							)}
-							{/* status, not alert: the Bed is still playing and nothing here
-							    is urgent enough to interrupt a screen reader mid-sentence. */}
-							{rejection !== null && <p role="status">{rejectionMessages[rejection.reason]}</p>}
-						</>
-					)}
+			{/* status, not alert: the Bed is still playing and nothing here is
+			    urgent enough to interrupt a screen reader mid-sentence. tabIndex
+			    -1 keeps it out of the tab order while still letting the withdrawal
+			    above move focus here. */}
+			<p role="status" tabIndex={-1} ref={statusRef}>{statusMessage}</p>
+			{control}
 		</div>
 	);
 }

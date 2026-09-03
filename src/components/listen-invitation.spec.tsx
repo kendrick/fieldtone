@@ -119,9 +119,9 @@ describe('listen-invitation', () => {
 		render(<ListenInvitation runtime={runtime} />);
 
 		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
-		const message = await screen.findByRole('status');
+		const message = await screen.findByText(/browser/i);
 
-		expect(message.textContent).toMatch(/browser/i);
+		expect(message.getAttribute('role')).toBe('status');
 		expect(message.textContent).toMatch(/settings/i);
 		expect(screen.queryByRole('button', { name: 'Let it listen' })).toBeNull();
 	});
@@ -131,9 +131,9 @@ describe('listen-invitation', () => {
 		render(<ListenInvitation runtime={runtime} />);
 
 		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
-		const message = await screen.findByRole('status');
+		const message = await screen.findByText(/no microphone/i);
 
-		expect(message.textContent).toMatch(/no microphone/i);
+		expect(message.getAttribute('role')).toBe('status');
 		expect(screen.getByRole('button', { name: 'Let it listen' })).toBeDefined();
 	});
 
@@ -142,9 +142,9 @@ describe('listen-invitation', () => {
 		render(<ListenInvitation runtime={runtime} />);
 
 		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
-		const message = await screen.findByRole('status');
+		const message = await screen.findByText(/another app/i);
 
-		expect(message.textContent).toMatch(/another app/i);
+		expect(message.getAttribute('role')).toBe('status');
 		expect(screen.getByRole('button', { name: 'Let it listen' })).toBeDefined();
 	});
 
@@ -153,10 +153,33 @@ describe('listen-invitation', () => {
 		render(<ListenInvitation runtime={runtime} />);
 
 		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
-		const message = await screen.findByRole('status');
+		const message = await screen.findByText(/cannot open a microphone/i);
 
-		expect(message.textContent).toMatch(/cannot open a microphone/i);
+		expect(message.getAttribute('role')).toBe('status');
 		expect(screen.queryByRole('button', { name: 'Let it listen' })).toBeNull();
+	});
+
+	// The region has to exist before it has anything to say. A live region
+	// inserted at the same moment as its first message is routinely skipped,
+	// because screen readers announce changes to regions they already track.
+	it('mounts the status region before there is anything to announce', async () => {
+		const { runtime } = await playingRuntime();
+		render(<ListenInvitation runtime={runtime} />);
+
+		expect(screen.getByRole('status').textContent).toBe('');
+	});
+
+	// The listener pressed a button that then withdrew itself, so focus would
+	// otherwise land on the body with nothing said. Moving it onto the
+	// explanation is what makes the outcome reachable without a mouse.
+	it('moves focus onto the explanation when the Invitation withdraws', async () => {
+		const { runtime } = await playingRuntime('refused');
+		render(<ListenInvitation runtime={runtime} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+		const message = await screen.findByText(/browser/i);
+
+		expect(document.activeElement).toBe(message);
 	});
 
 	it('remembers that the Invitation was offered once the reveal finishes', async () => {
@@ -166,6 +189,15 @@ describe('listen-invitation', () => {
 		fireEvent.animationEnd(invitationFloor(container));
 
 		expect(window.localStorage.getItem(OFFERED_KEY)).toBe('offered');
+	});
+
+	it('drops the floor for the rest of the session once the reveal has finished', async () => {
+		const { runtime } = await playingRuntime();
+		const { container } = render(<ListenInvitation runtime={runtime} />);
+
+		fireEvent.animationEnd(invitationFloor(container));
+
+		expect(invitationFloor(container).hasAttribute('data-returning')).toBe(true);
 	});
 
 	it('waits out the floor for a listener who has never been offered it', async () => {
