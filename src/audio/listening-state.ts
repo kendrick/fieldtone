@@ -42,8 +42,8 @@ export const notListening: NotListening = { status: 'not-listening' };
 
 // `Refused` is an accepted starting point because three of the four reasons are
 // worth another press: a microphone gets plugged in, the app holding it gets
-// closed. Only `refused` itself is permanent, and the browser — not this
-// machine — is what makes it so; the Invitation hides the button for that case.
+// closed. Only `refused` itself is permanent, and the browser—not this
+// machine—is what makes it so; the Invitation hides the button for that case.
 export function beginOpening(_from: NotListening | Refused): Opening {
 	return { status: 'opening' };
 }
@@ -54,6 +54,16 @@ export function completeOpening(_from: Opening): Listening {
 
 export function refused(_from: Opening, reason: ListeningRejectionReason): Refused {
 	return { status: 'refused', reason };
+}
+
+// The way out of `opening` that neither claims a microphone the listener no
+// longer wants nor records a refusal nobody made. An attempt can outlive the
+// reason for it—Stop pressed while the browser's prompt is still up—and
+// without this edge the two ways to leave both lie: `completeOpening` would
+// light the recording indicator over a stopped Bed, and `refused` would put a
+// message on screen blaming a browser that had said yes.
+export function abandonOpening(_from: Opening): NotListening {
+	return notListening;
 }
 
 export function endListening(_from: Listening): NotListening {

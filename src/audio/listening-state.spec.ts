@@ -2,7 +2,7 @@ import type { Refused } from './listening-state';
 
 import { describe, expect, it } from 'vitest';
 
-import { beginOpening, completeOpening, endListening, notListening, refused } from './listening-state';
+import { abandonOpening, beginOpening, completeOpening, endListening, notListening, refused } from './listening-state';
 
 describe('listening state transitions', (): void => {
 	it('walks the full round trip from not listening to listening and back', (): void => {
@@ -30,6 +30,14 @@ describe('listening state transitions', (): void => {
 		const retrying = beginOpening(noMicrophone);
 
 		expect(retrying).toEqual({ status: 'opening' });
+	});
+
+	// The answer arrived, but too late to be worth anything. Back to where the
+	// listener started, with no refusal recorded against them.
+	it('abandons an attempt that outlived the reason for it', (): void => {
+		const opening = beginOpening(notListening);
+
+		expect(abandonOpening(opening)).toEqual({ status: 'not-listening' });
 	});
 });
 
@@ -61,5 +69,13 @@ describe('illegal transitions are compile errors', (): void => {
 	it('rejects stopping a microphone that never opened', (): void => {
 		// @ts-expect-error endListening only accepts Listening, not NotListening.
 		expect(endListening(notListening)).toEqual({ status: 'not-listening' });
+	});
+
+	// Abandoning an open microphone would drop the stream on the floor: nothing
+	// left holding it, and no `stopListening` on the way past. `endListening` is
+	// the edge that closes one, and the types are what keep the two apart.
+	it('rejects abandoning a microphone that is already open', (): void => {
+		// @ts-expect-error abandonOpening only accepts Opening, not Listening.
+		expect(abandonOpening(completeOpening(beginOpening(notListening)))).toEqual({ status: 'not-listening' });
 	});
 });

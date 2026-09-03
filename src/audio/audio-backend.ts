@@ -48,7 +48,7 @@ export interface AudioBackend {
 	// Opens the microphone, and nothing more: the stream is held but not wired
 	// into the graph. Async because the browser's permission prompt is, and it
 	// has to be the first await on the accept path for the same reason `resume`
-	// does — Safari spends the gesture on whichever await runs first. Rejects
+	// does—Safari spends the gesture on whichever await runs first. Rejects
 	// with `ListeningRejection` and nothing else.
 	startListening: () => Promise<void>;
 	// Releases the microphone. A no-op when none is open, so the runtime can

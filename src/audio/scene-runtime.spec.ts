@@ -747,4 +747,61 @@ describe('scene runtime listening', (): void => {
 		]);
 		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
 	});
+
+	// The gap `opening` names is wide enough for the whole session to end inside
+	// it: a listener presses accept, leaves the browser's prompt sitting there,
+	// presses stop, and grants permission afterwards. The stop leaves through
+	// `opening` without waiting, so the grant is the last thing to arrive and it
+	// is the only place left to close the microphone.
+	it('releases a microphone granted after stop was pressed mid-opening', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		// Nothing awaited between these two, the way the in-flight accept case does
+		// it: the stop has to land while startListening is still suspended on the
+		// backend, which is the only window this case covers.
+		const accepting = runtime.startListening();
+		const stopResult = runtime.stop();
+		const result = await accepting;
+
+		expect(stopResult).toEqual({ ok: true });
+		expect(result).toEqual({ ok: false, reason: 'not-playing' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'idle' });
+		// stopListening lands last because it cannot land any earlier: there was no
+		// microphone to close until the grant arrived. What matters is that it lands
+		// at all, and that the recording indicator goes out with it.
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
+			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
+			{ kind: 'stopListening' },
+		]);
+	});
+
+	// The same race with the opposite answer. Nothing needs closing here, but the
+	// Invitation must not surface a refusal either: the listener stopped the app,
+	// and a message about the microphone on a stopped Bed answers a question they
+	// stopped asking.
+	it('records no refusal when the browser says no after stop was pressed mid-opening', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: 'refused' });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		const stopResult = runtime.stop();
+		const result = await accepting;
+
+		expect(stopResult).toEqual({ ok: true });
+		expect(result).toEqual({ ok: false, reason: 'not-playing' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'idle' });
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
+			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
+			{ kind: 'stopListening' },
+		]);
+	});
 });

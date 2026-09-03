@@ -15,7 +15,7 @@ import { clampSignalValue, defaultSignalValues, signalOffset } from '@/scenes/co
 import { deserializeParameterValues, serializeParameterValues } from '@/scenes/parameter-serialization';
 import { clampParameterValue, defaultParameterValues } from '@/scenes/parameters';
 import { ListeningRejection } from './audio-backend';
-import { beginOpening, completeOpening, endListening, notListening, refused } from './listening-state';
+import { abandonOpening, beginOpening, completeOpening, endListening, notListening, refused } from './listening-state';
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
 
 export const FADE_IN_SECONDS = 0.3;
@@ -206,6 +206,10 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 				const opening = beginOpening(state);
 				store.setState({ listening: opening });
 
+				// Held rather than acted on, so both outcomes reach the playback
+				// recheck below through one path instead of each carrying its own copy.
+				let rejection: ListeningRejectionReason | undefined;
+
 				try {
 					await backend.startListening();
 				}
@@ -214,9 +218,32 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 					// adapter bug throws like any other code. `unavailable` is the
 					// honest reading of an error nobody classified: something is wrong
 					// with this browser, and the listener refused nothing.
-					const reason = error instanceof ListeningRejection ? error.reason : 'unavailable';
-					store.setState({ listening: refused(opening, reason) });
-					return { ok: false, reason };
+					rejection = error instanceof ListeningRejection ? error.reason : 'unavailable';
+				}
+
+				// Rechecked after the await, not only on entry. The prompt can sit on
+				// screen for as long as the listener ignores it, and Stop leaves through
+				// `opening` without waiting—so a grant can arrive with the Bed already
+				// stopped. Completing here would hand back a live microphone and a lit
+				// recording indicator behind silence, which is exactly what the
+				// stopListening() call inside stop() exists to prevent and what
+				// Principle I forbids outright.
+				if (store.getState().playback.status !== 'playing') {
+					// Called on the refused path too, not just the granted one. The seam
+					// documents it as a no-op when no microphone is open, so the cost is
+					// nothing and one exit from a race is easier to trust than two that
+					// differ only where the difference cannot be observed.
+					backend.stopListening();
+					store.setState({ listening: abandonOpening(opening) });
+					// The existing reason rather than a new one: from here the outcome is
+					// the same as accepting before pressing play. There is no Bed to
+					// listen alongside.
+					return { ok: false, reason: 'not-playing' };
+				}
+
+				if (rejection !== undefined) {
+					store.setState({ listening: refused(opening, rejection) });
+					return { ok: false, reason: rejection };
 				}
 
 				store.setState({ listening: completeOpening(opening) });
@@ -248,7 +275,7 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 
 		// Before the fade, not after. Principle I says nothing captured may outlive
 		// the audio session, and a microphone still open after Stop is audio still
-		// arriving into a session the listener ended — with the browser's recording
+		// arriving into a session the listener ended—with the browser's recording
 		// indicator lit over a silent Bed to advertise it. A no-op when the
 		// listener never accepted the second Invitation.
 		stopListening();
