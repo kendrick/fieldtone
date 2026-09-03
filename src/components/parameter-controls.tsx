@@ -72,8 +72,10 @@ function mirrorParametersToLocation(runtime: SceneRuntime): void {
 	// Built from the current URL rather than a bare query string: a future
 	// `scene=` key or a tracking parameter someone appended has to survive a
 	// slider move, and the pathname and hash need to ride along untouched.
-	// Nothing here may hardcode a path—next.config.ts sets no basePath yet,
-	// and the hosting target isn't decided.
+	// Nothing here may hardcode a path. next.config.ts sets basePath to
+	// /fieldtone so GitHub Pages can serve this as a project page, so rebuilding
+	// the URL from `/` would navigate off the deployed app entirely. Preserving
+	// the pathname is what carries the base path through.
 	const url = new URL(window.location.href);
 	for (const [name, text] of new URLSearchParams(runtime.serializeParameters())) {
 		url.searchParams.set(name, text);
