@@ -13,7 +13,7 @@ Describes output whose character is shaped in real time by live input. Reactive 
 _Avoid_: Interactive, responsive, adaptive
 
 **Listening**:
-Reading the microphone to derive control values. Listening never records and never retains audio.
+Reading the microphone, both to derive Control Signals and to catch Material. Listening never records and never stores audio; what it holds is bounded, in memory, and gone when Listening stops.
 _Avoid_: Recording, capturing, sampling
 
 **Listening Depth**:
