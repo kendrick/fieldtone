@@ -13,15 +13,31 @@ Describes output whose character is shaped in real time by live input. Reactive 
 _Avoid_: Interactive, responsive, adaptive
 
 **Listening**:
-Reading the microphone to derive control values. Listening never records and never retains audio.
+Reading the microphone, both to derive Control Signals and to catch Material. Listening never records and never stores audio; what it holds is bounded, in memory, and gone when Listening stops.
 _Avoid_: Recording, capturing, sampling
 
+**Listening Depth**:
+How far into a sound Listening goes, and what that costs. A deeper depth earns its cost only after the shallower one has run out.
+_Avoid_: Tier, analysis stage, quality setting
+
+**Level Listening**:
+The shallowest depth, which reads loudness and the moment something happens. It knows a sound occurred, never what it was.
+_Avoid_: Amplitude tracking, volume detection
+
+**Spectral Listening**:
+The middle depth, which reads whether a sound is bright or dark. It separates kinds of sound without identifying any of them.
+_Avoid_: Frequency analysis, spectrum, EQ
+
+**Semantic Listening**:
+The deepest depth, which reads what a sound actually is, a laugh or a bus.
+_Avoid_: Classification, sound recognition (Recognition names a Moment here)
+
 **Control Signal**:
-A value derived from live input that modulates a synthesis parameter. The user never hears a Control Signal, only its effect.
+A value derived from live input that moves a synthesis parameter away from where the listener set it, without changing their setting. The listener never hears a Control Signal, only its effect.
 _Avoid_: Envelope, trigger, modulator
 
 **Material**:
-Live microphone audio used as the sound the user actually hears, routed through effects rather than analyzed. The alternative to treating input as a Control Signal.
+Live input the listener actually hears, transformed rather than analyzed away. A Control Signal finds the piece worth using, so the two compose rather than competing.
 _Avoid_: Source audio, input audio, dry signal
 
 **Bed**:
@@ -33,7 +49,7 @@ A perceptible event in a Scene that catches attention without demanding it. Mome
 _Avoid_: Event, cue, hit
 
 **Recognition**:
-The Moment where a listener hears a sound they made come back changed but still identifiably theirs. The primary kind of Moment, and the one the app is built around.
+The Moment where a listener hears a sound they made come back changed but still identifiably theirs, and the one the app is built around. Both halves of Listening make it, a Control Signal marking the sound and Material returning it.
 _Avoid_: Playback, echo, callback
 
 **Invitation**:

@@ -1,23 +1,19 @@
 <!--
   Sync Impact Report
-  Version change: 1.0.1 → 1.1.0 (MINOR)
+  Version change: 1.1.0 → 1.2.0 (MINOR)
   Modified principles:
-    - I. Privacy & Security: struck the motion sensor clause (moved to
-      ADR 0003, deferred to v2); added a bounded in-memory audio buffer
-      exception, capped at 10 seconds, never stored or transmitted
-    - IV. Technology Stack: resolved TODO(WEB_AUDIO_LIBRARY) to Tone.js
-      (ADR 0001); named WebGL as the visual layer (ADR 0002)
-    - V. Performance & Battery Efficiency: replaced the 60 fps mandate
-      with an adaptive render-resolution budget held against the
-      thermal requirement (ADR 0002)
-  Added sections:
-    - Governance: threshold carve-out for numeric metric changes
+    - I. Privacy & Security: the bounded in-memory audio buffer MUST
+      now be zeroed whenever Listening suspends, not only when the
+      audio session ends
+  Added sections: none
   Removed sections: none
-  Version rationale: the buffer exception clarifies Principle I's
-    existing intent rather than changing it, and the motion clause
-    governed a feature that does not exist, so neither is a
-    redefinition under Governance. If you read the buffer exception as
-    narrowing a NON-NEGOTIABLE prohibition, this is a 2.0.0 instead.
+  Version rationale: the new clause tightens what a NON-NEGOTIABLE
+    principle demands, which Governance counts as a material
+    expansion rather than a clarification. ADR 0004 introduced a
+    state the old wording never anticipated: Listening suspends when
+    the app is backgrounded while playback continues, and "MUST NOT
+    outlive the audio session" left open whether captured audio may
+    sit in memory through it.
   Templates requiring updates:
     - plan-template.md ✅ no change needed (Constitution Check is dynamic)
     - spec-template.md ✅ no change needed
@@ -43,6 +39,10 @@ Principle I outranks every other.
   10 seconds, which real-time processing requires. That buffer
   MUST NOT be written to storage, MUST NOT outlive the audio
   session, and MUST NOT be transmitted
+- That buffer MUST be zeroed whenever Listening suspends, not only
+  when playback ends. Backgrounding stops the microphone while
+  playback continues, so audio captured before the suspension MUST
+  NOT survive it
 - Security headers and Content Security Policy MUST follow OWASP
   recommendations for static web apps
 
@@ -171,4 +171,4 @@ Principle I outranks every other.
   and the constitution stops getting amended.
 - When principles conflict, resolve by priority order (I highest).
 
-**Version**: 1.1.0 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-09-01
+**Version**: 1.2.0 | **Ratified**: 2026-04-08 | **Last Amended**: 2026-09-02
