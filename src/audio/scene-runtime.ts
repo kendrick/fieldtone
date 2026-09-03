@@ -2,6 +2,8 @@ import type { StoreApi } from 'zustand/vanilla';
 
 import type { AudioBackend } from './audio-backend';
 
+import type { ListeningRejectionReason, ListeningState } from './listening-state';
+
 import type { PlaybackState } from './playback-state';
 
 import type { SignalValues } from '@/scenes/control-signals';
@@ -12,6 +14,8 @@ import { createStore } from 'zustand/vanilla';
 import { clampSignalValue, defaultSignalValues, signalOffset } from '@/scenes/control-signals';
 import { deserializeParameterValues, serializeParameterValues } from '@/scenes/parameter-serialization';
 import { clampParameterValue, defaultParameterValues } from '@/scenes/parameters';
+import { ListeningRejection } from './audio-backend';
+import { abandonOpening, beginOpening, completeOpening, dismissRefusal, endListening, notListening, refused } from './listening-state';
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
 
 export const FADE_IN_SECONDS = 0.3;
@@ -21,6 +25,10 @@ export const FADE_OUT_SECONDS = 0.3;
 // Scene's parameter values publish through one store and one subscription.
 export interface RuntimeState {
 	readonly playback: PlaybackState;
+	// A second machine beside the first rather than more statuses inside it: the
+	// two are independent, and the whole point of the second Invitation is that
+	// refusing it leaves the first one playing.
+	readonly listening: ListeningState;
 	readonly parameters: ParameterValues;
 	// Held apart from `parameters` rather than folded into it, because a Control
 	// Signal moves a parameter without changing the listener's setting. Merge the
@@ -40,6 +48,14 @@ export type StartResult = { ok: true } | { ok: false; reason: 'already-starting'
 
 export type StopResult = { ok: true } | { ok: false; reason: 'not-playing' };
 
+// The four backend reasons ride through unwrapped, so a caller branches on one
+// union rather than unpacking a nested result to find out the browser said no.
+export type StartListeningResult
+	= { ok: true }
+		| { ok: false; reason: 'not-playing' | 'session-ended' | 'already-opening' | 'already-listening' | ListeningRejectionReason };
+
+export type StopListeningResult = { ok: true } | { ok: false; reason: 'not-listening' };
+
 // The clamped value comes back rather than the caller's, so a UI control can
 // settle on what the runtime actually stored instead of showing a number the
 // audio never used.
@@ -48,6 +64,8 @@ export type SetParameterResult = { ok: true; value: number } | { ok: false; reas
 export interface SceneRuntime {
 	start: () => Promise<StartResult>;
 	stop: () => StopResult;
+	startListening: () => Promise<StartListeningResult>;
+	stopListening: () => StopListeningResult;
 	setParameter: (name: string, value: number) => SetParameterResult;
 	getState: () => PlaybackState;
 	// `schema` rather than `parameters`: RuntimeState.parameters already means the
@@ -58,15 +76,16 @@ export interface SceneRuntime {
 	applySerializedParameters: (search: string) => ParameterValues;
 }
 
-// Exhaustiveness guard: a state added to PlaybackState without a matching
-// switch branch here fails the build instead of falling through silently.
+// Exhaustiveness guard: a state added to either machine without a matching switch
+// branch here fails the build instead of falling through silently.
 function assertNever(value: never): never {
-	throw new Error(`unreachable playback state: ${JSON.stringify(value)}`);
+	throw new Error(`unreachable runtime state: ${JSON.stringify(value)}`);
 }
 
 export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRuntime {
 	const store = createStore<RuntimeState>()(() => ({
 		playback: idle,
+		listening: notListening,
 		parameters: defaultParameterValues(scene.parameters),
 		// Seeded rather than left empty, so the Bed sounds right before the
 		// microphone Invitation is ever offered: ADR 0004 rests a Scene at its
@@ -74,6 +93,15 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		// first press happens long before anything is listening.
 		signals: defaultSignalValues(scene.controlSignals),
 	}));
+
+	// Which playback session is current, bumped once per session that reaches
+	// `playing`. An awaited getUserMedia outlives the press that asked for it, and
+	// the playback status alone cannot tell "the same Bed is still playing" from
+	// "the listener stopped and started a new one": both read `playing`. Without
+	// this counter a grant arriving after stop-then-play completes into a session
+	// that never accepted anything, which is the acceptance Principle I asks for
+	// arriving in the wrong session.
+	let playbackGeneration = 0;
 
 	// The one place the listener's values and the signals' readings meet.
 	// Everything upstream holds them apart, and a value combines only on its way
@@ -155,6 +183,7 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 					return { ok: false, reason: 'audio-unavailable' };
 				}
 
+				playbackGeneration += 1;
 				store.setState({ playback: completeStart(starting) });
 				return { ok: true };
 			}
@@ -163,11 +192,126 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		}
 	}
 
+	// Nothing on this path touches playback, on either the granted or the refused
+	// side. That is what "the Bed keeps playing" means in code: the second
+	// Invitation can be refused outright and the listener still has the app they
+	// had before they were asked.
+	async function startListening(): Promise<StartListeningResult> {
+		// Guarded first because the microphone is only ever wired into a graph that
+		// exists. Opening one over a stopped Bed would light the browser's recording
+		// indicator with nothing to show for it.
+		if (store.getState().playback.status !== 'playing') {
+			return { ok: false, reason: 'not-playing' };
+		}
+
+		const state = store.getState().listening;
+
+		switch (state.status) {
+			case 'opening':
+				return { ok: false, reason: 'already-opening' };
+			case 'listening':
+				return { ok: false, reason: 'already-listening' };
+			case 'not-listening':
+			case 'refused': {
+				const opening = beginOpening(state);
+				// Read before the await, compared after it. This is the session the
+				// listener accepted in, and the only one the microphone may open into.
+				const generation = playbackGeneration;
+				store.setState({ listening: opening });
+
+				// Held rather than acted on, so both outcomes reach the playback
+				// recheck below through one path instead of each carrying its own copy.
+				let rejection: ListeningRejectionReason | undefined;
+
+				try {
+					await backend.startListening();
+				}
+				catch (error) {
+					// The seam promises a ListeningRejection and nothing else, but an
+					// adapter bug throws like any other code. `unavailable` is the
+					// honest reading of an error nobody classified: something is wrong
+					// with this browser, and the listener refused nothing.
+					rejection = error instanceof ListeningRejection ? error.reason : 'unavailable';
+				}
+
+				// Rechecked after the await, not only on entry. The prompt can sit on
+				// screen for as long as the listener ignores it, and Stop leaves through
+				// `opening` without waiting—so a grant can arrive with the Bed already
+				// stopped. Completing here would hand back a live microphone and a lit
+				// recording indicator behind silence, which is exactly what the
+				// stopListening() call inside stop() exists to prevent and what
+				// Principle I forbids outright.
+				//
+				// Two ways to be orphaned, and the generation is the one the status
+				// misses: a listener who stops, presses play again, and only then
+				// answers the prompt leaves a session reading `playing` that never
+				// accepted anything. An if-chain rather than one condition, so each
+				// exit reports the reason that is actually true.
+				let orphaned: 'not-playing' | 'session-ended' | undefined;
+
+				if (playbackGeneration !== generation) {
+					orphaned = 'session-ended';
+				}
+				else if (store.getState().playback.status !== 'playing') {
+					orphaned = 'not-playing';
+				}
+
+				if (orphaned !== undefined) {
+					// Called on the refused path too, not just the granted one. The seam
+					// documents it as a no-op when no microphone is open, so the cost is
+					// nothing and one exit from a race is easier to trust than two that
+					// differ only where the difference cannot be observed.
+					backend.stopListening();
+					store.setState({ listening: abandonOpening(opening) });
+					return { ok: false, reason: orphaned };
+				}
+
+				if (rejection !== undefined) {
+					store.setState({ listening: refused(opening, rejection) });
+					return { ok: false, reason: rejection };
+				}
+
+				store.setState({ listening: completeOpening(opening) });
+				return { ok: true };
+			}
+			default:
+				return assertNever(state);
+		}
+	}
+
+	function stopListening(): StopListeningResult {
+		const state = store.getState().listening;
+
+		if (state.status !== 'listening') {
+			return { ok: false, reason: 'not-listening' };
+		}
+
+		backend.stopListening();
+		store.setState({ listening: endListening(state) });
+		return { ok: true };
+	}
+
 	function stop(): StopResult {
 		const state = store.getState().playback;
 
 		if (state.status !== 'playing') {
 			return { ok: false, reason: 'not-playing' };
+		}
+
+		// Before the fade, not after. Principle I says nothing captured may outlive
+		// the audio session, and a microphone still open after Stop is audio still
+		// arriving into a session the listener ended—with the browser's recording
+		// indicator lit over a silent Bed to advertise it. A no-op when the
+		// listener never accepted the second Invitation.
+		stopListening();
+
+		// A refusal is not a microphone, so stopListening leaves it alone, but it
+		// must not outlive the session either. Left standing it keeps the
+		// Invitation rendered over a stopped Bed, with a button that every press
+		// hands straight back to the not-playing guard.
+		const explained = store.getState().listening;
+		if (explained.status === 'refused') {
+			store.setState({ listening: dismissRefusal(explained) });
 		}
 
 		backend.fadeOut(FADE_OUT_SECONDS);
@@ -266,5 +410,5 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		backend.setParameter(signal.parameter, effective);
 	});
 
-	return { start, stop, setParameter, getState, schema: scene.parameters, store, serializeParameters, applySerializedParameters };
+	return { start, stop, startListening, stopListening, setParameter, getState, schema: scene.parameters, store, serializeParameters, applySerializedParameters };
 }

@@ -1,3 +1,4 @@
+import type { ListeningRejectionReason } from './listening-state';
 import type { PlaybackState } from './playback-state';
 import type { ControlSignalDeclaration } from '@/scenes/control-signals';
 import type { Scene } from '@/scenes/scene';
@@ -602,5 +603,257 @@ describe('scene runtime control signals', (): void => {
 
 		expect(backend.commands.filter(command => command.kind === 'setParameter').at(-1)?.value).toBe(1);
 		expect(runtime.store.getState().parameters).toEqual({ level: 0.5 });
+	});
+});
+
+// Listening is the second Invitation, and every case here turns on the rule that
+// it never disturbs the first: whatever the microphone answers, the Bed is still
+// playing afterwards. A refusal that silenced the Bed would make the Invitation a
+// wall, which is the one thing CONTEXT.md says an Invitation is never.
+describe('scene runtime listening', (): void => {
+	const rejectionReasons: ListeningRejectionReason[] = ['refused', 'no-microphone', 'busy', 'unavailable'];
+
+	it('opens the microphone while the bed keeps playing', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const result = await runtime.startListening();
+
+		expect(result).toEqual({ ok: true });
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'startListening' }]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+	});
+
+	// Everything after the three start commands is asserted whole, so a fadeOut or
+	// a stop sneaking in on a refusal fails the case rather than hiding in a slice.
+	it.each(rejectionReasons)('keeps the bed playing when the microphone answers %s', async (reason): Promise<void> => {
+		const backend = createRecordingBackend({ listening: reason });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const result = await runtime.startListening();
+
+		expect(result).toEqual({ ok: false, reason });
+		expect(runtime.store.getState().listening).toEqual({ status: 'refused', reason });
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'startListening' }]);
+	});
+
+	// The seam promises a ListeningRejection and nothing else, but a promise is not
+	// a guarantee: an adapter bug throws a TypeError like anything else does. The
+	// listener still needs a message, and `unavailable` is the one that does not
+	// blame them for a refusal they never made.
+	it('treats a throw that is not a ListeningRejection as unavailable', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		// Spread rather than a hand-rolled fake, so every other command still lands
+		// in the recorder. The copied `commands` snapshot goes stale, which is why
+		// the assertions read it off `backend` instead.
+		const runtime = createSceneRuntime({
+			...backend,
+			startListening: (): Promise<void> => Promise.reject(new TypeError('getUserMedia is not a function')),
+		}, silentScene);
+
+		await runtime.start();
+		const result = await runtime.startListening();
+
+		expect(result).toEqual({ ok: false, reason: 'unavailable' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'refused', reason: 'unavailable' });
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+	});
+
+	it('refuses to listen before anything is playing, and touches the backend not at all', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		const result = await runtime.startListening();
+
+		expect(result).toEqual({ ok: false, reason: 'not-playing' });
+		expect(backend.commands).toEqual([]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+	});
+
+	it('refuses a second accept that lands while the first is still opening', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		// Fire both before awaiting either, the way the in-flight start case does:
+		// the second call has to land while the first is suspended on
+		// backend.startListening(), which is the only window `already-opening` covers.
+		const first = runtime.startListening();
+		const second = runtime.startListening();
+
+		const [firstResult, secondResult] = await Promise.all([first, second]);
+
+		expect(firstResult).toEqual({ ok: true });
+		expect(secondResult).toEqual({ ok: false, reason: 'already-opening' });
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'startListening' }]);
+	});
+
+	it('refuses an accept that arrives once the microphone is already open', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		await runtime.startListening();
+		const result = await runtime.startListening();
+
+		expect(result).toEqual({ ok: false, reason: 'already-listening' });
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'startListening' }]);
+	});
+
+	it('releases the microphone and leaves the bed playing', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		await runtime.startListening();
+		const result = runtime.stopListening();
+
+		expect(result).toEqual({ ok: true });
+		expect(backend.commands.slice(4)).toEqual([{ kind: 'stopListening' }]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+	});
+
+	it('refuses to release a microphone that was never opened', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const result = runtime.stopListening();
+
+		expect(result).toEqual({ ok: false, reason: 'not-listening' });
+		expect(backend.commands.slice(3)).toEqual([]);
+	});
+
+	// Order is the assertion: the microphone closes first, so no window exists
+	// where a listener sees a silent Bed and a live recording indicator.
+	it('closes the microphone before fading the bed out', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		await runtime.startListening();
+		const result = runtime.stop();
+
+		expect(result).toEqual({ ok: true });
+		expect(backend.commands.slice(4)).toEqual([
+			{ kind: 'stopListening' },
+			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
+			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+	});
+
+	// The gap `opening` names is wide enough for the whole session to end inside
+	// it: a listener presses accept, leaves the browser's prompt sitting there,
+	// presses stop, and grants permission afterwards. The stop leaves through
+	// `opening` without waiting, so the grant is the last thing to arrive and it
+	// is the only place left to close the microphone.
+	it('releases a microphone granted after stop was pressed mid-opening', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		// Nothing awaited between these two, the way the in-flight accept case does
+		// it: the stop has to land while startListening is still suspended on the
+		// backend, which is the only window this case covers.
+		const accepting = runtime.startListening();
+		const stopResult = runtime.stop();
+		const result = await accepting;
+
+		expect(stopResult).toEqual({ ok: true });
+		expect(result).toEqual({ ok: false, reason: 'not-playing' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'idle' });
+		// stopListening lands last because it cannot land any earlier: there was no
+		// microphone to close until the grant arrived. What matters is that it lands
+		// at all, and that the recording indicator goes out with it.
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
+			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
+			{ kind: 'stopListening' },
+		]);
+	});
+
+	// A refusal explains a microphone the listener asked for while the Bed was
+	// playing. Stop ends that session, so the explanation goes with it: leaving
+	// `refused` behind keeps the Invitation on screen over a stopped Bed, where
+	// its button can only hit the not-playing guard and do nothing.
+	it('clears a refusal when the Bed stops, so no explanation outlives it', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: 'no-microphone' });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		await runtime.startListening();
+		expect(runtime.store.getState().listening).toEqual({ status: 'refused', reason: 'no-microphone' });
+
+		runtime.stop();
+
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+	});
+
+	// The same race with the opposite answer. Nothing needs closing here, but the
+	// Invitation must not surface a refusal either: the listener stopped the app,
+	// and a message about the microphone on a stopped Bed answers a question they
+	// stopped asking.
+	it('records no refusal when the browser says no after stop was pressed mid-opening', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: 'refused' });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		const stopResult = runtime.stop();
+		const result = await accepting;
+
+		expect(stopResult).toEqual({ ok: true });
+		expect(result).toEqual({ ok: false, reason: 'not-playing' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'idle' });
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
+			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
+			{ kind: 'stopListening' },
+		]);
+	});
+
+	// The case the playback status cannot catch on its own. Stop, then play again,
+	// and the runtime is back to `playing` while the first prompt is still up: a
+	// grant landing now would open the microphone in a session nobody accepted it
+	// in, with the Invitation still offering the button that would have asked.
+	// Holding the grant by hand is the only way to reach it, because the fake
+	// otherwise resolves before the second press can land.
+	it('abandons a grant that arrives after the listener stopped and started again', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		let grantMicrophone: () => void = (): void => {};
+		const prompt = new Promise<void>((resolve): void => {
+			grantMicrophone = resolve;
+		});
+		// Spread rather than a hand-rolled fake, so every command except the held
+		// one still reaches the recorder.
+		const runtime = createSceneRuntime({ ...backend, startListening: (): Promise<void> => prompt }, silentScene);
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		runtime.stop();
+		await runtime.start();
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+
+		grantMicrophone();
+		const result = await accepting;
+
+		expect(result).toEqual({ ok: false, reason: 'session-ended' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		// Still playing: the second session is untouched by an attempt that belonged
+		// to the first, which is the whole point of turning the grant away here.
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+		// The microphone the browser just handed over is closed rather than left
+		// live behind a session that never asked for it.
+		expect(backend.commands.at(-1)).toEqual({ kind: 'stopListening' });
 	});
 });

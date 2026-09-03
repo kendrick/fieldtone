@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 
+import { ListenInvitation } from '@/components/listen-invitation';
 import { ParameterControls } from '@/components/parameter-controls';
 import { PlayToggle } from '@/components/play-toggle';
 
@@ -9,6 +10,7 @@ export default function HomePage(): ReactElement {
 			<h1 className="text-5xl font-semibold tracking-tight">FieldTone</h1>
 			<PlayToggle />
 			<ParameterControls />
+			<ListenInvitation />
 		</main>
 	);
 }

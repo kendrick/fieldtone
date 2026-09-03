@@ -2,6 +2,8 @@ import type { AudioBackend, SignalListener } from './audio-backend';
 import type { ParameterValues } from '@/scenes/parameters';
 import type { BedHandle, Scene } from '@/scenes/scene';
 import * as Tone from 'tone';
+import { ListeningRejection } from './audio-backend';
+import { reasonForCaptureError } from './capture-rejection';
 
 // Every Tone.js call in the app lives here: this is the one AudioBackend that
 // makes a sound, and the recording fake beside it is the one that does not. The
@@ -23,6 +25,19 @@ const DISPOSE_GRACE_SECONDS = 0.05;
 // A handful of windows is enough to tell a live Bed from a stuck one; more
 // would just be noise to eyeball in a console.
 const FINGERPRINT_WINDOWS = 8;
+
+// All three off because iOS voice processing ducks the output the moment it
+// hears input, which is the moment Recognition needs the Bed audible. ADR 0004
+// measured that on device: the default microphone ducks, one asked for with
+// `echoCancellation: false` does not. Safari reports the other two back as
+// neither applied nor refused, so treat them as requested and unconfirmed.
+//
+// Raw getUserMedia rather than Tone.UserMedia because `open()` sets echo
+// cancellation and noise suppression off but never touches automatic gain, and
+// a gain stage that quietly normalizes the room defeats Level Listening.
+const LISTENING_CONSTRAINTS: MediaStreamConstraints = {
+	audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false },
+};
 
 interface Voice {
 	handle: BedHandle;
@@ -129,6 +144,9 @@ export function createToneBackend(): ToneBackend {
 	// ticket (#27); this set is what that ticket's emission lands against
 	// without the subscribe side changing too.
 	const signalListeners = new Set<SignalListener>();
+	// The open microphone, or nothing. Closure state like the rest, which is what
+	// lets stopListening be a no-op rather than something the caller has to guard.
+	let stream: MediaStream | undefined;
 
 	function readOutputLevel(): number {
 		if (output === undefined) {
@@ -239,6 +257,41 @@ export function createToneBackend(): ToneBackend {
 		voice.envelope.gain.rampTo(0, seconds);
 	}
 
+	async function startListening(): Promise<void> {
+		// The absent-API case never reaches getUserMedia, so nothing maps it for us.
+		// It is `unavailable` for the same reason an unrecognized DOMException name
+		// is: try another browser, not try again.
+		if (navigator.mediaDevices?.getUserMedia === undefined) {
+			throw new ListeningRejection('unavailable');
+		}
+		let opened: MediaStream;
+		try {
+			// First await on the accept path, and the reason nothing enumerates
+			// devices ahead of it: Safari spends the tap on whichever await runs
+			// first, exactly as it spends the play tap on resume. An enumerateDevices
+			// here would take the gesture and hand back unlabeled devices anyway.
+			opened = await navigator.mediaDevices.getUserMedia(LISTENING_CONSTRAINTS);
+		}
+		catch (error) {
+			// One error type out of this seam, so the Invitation branches on a reason
+			// it can phrase rather than on a DOMException name that varies by browser.
+			throw new ListeningRejection(reasonForCaptureError(error), { cause: error });
+		}
+		// Held, not wired: connecting the stream to the graph is #27, and the session
+		// type switch iOS needs before capture works at all is #15. Until then this
+		// opens the microphone on desktop and nothing else.
+		stream = opened;
+	}
+
+	function stopListening(): void {
+		// A track outlives the stream object, so releasing the reference alone leaves
+		// the recording indicator lit. Principle I makes that non-negotiable.
+		for (const track of stream?.getTracks() ?? []) {
+			track.stop();
+		}
+		stream = undefined;
+	}
+
 	function stop(afterSeconds: number): void {
 		if (voice === undefined) {
 			return;
@@ -267,5 +320,5 @@ export function createToneBackend(): ToneBackend {
 		};
 	}
 
-	return { resume, start, setParameter, fadeIn, fadeOut, stop, onSignal, probe };
+	return { resume, start, setParameter, fadeIn, fadeOut, startListening, stopListening, stop, onSignal, probe };
 }
