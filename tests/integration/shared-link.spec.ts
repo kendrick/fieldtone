@@ -10,6 +10,20 @@ import { AUDIBLE_THRESHOLD, renderBedRms } from './probe';
 // Brightness's is 0.0225.
 const SPACE_DEFAULT = 0.35;
 
+declare global {
+	interface Window {
+		// Written by the clipboard stub the cases below install with
+		// addInitScript, so a page.evaluate afterward can read back what
+		// share-control.tsx passed to writeText without a cast—lib.dom types
+		// Window with no such member on its own.
+		__sharedLink?: string;
+		// Same idea for the native share path: each stubbed navigator.share call
+		// appends its argument here, so the assertion can check the call count
+		// as well as what it carried.
+		__shareCalls?: Array<{ url?: string }>;
+	}
+}
+
 test.describe('shared link', () => {
 	test('a link applies its values and the resulting graph is audible', async ({ page }): Promise<void> => {
 		await page.goto('./?space=0&brightness=3');
@@ -94,5 +108,121 @@ test.describe('shared link', () => {
 		// has to name a key the test never moved.
 		await expect(page).toHaveURL(/[?&]brightness=3(?:&|$)/);
 		await expect(page).toHaveURL(/[?&]space=/);
+	});
+
+	test('the clipboard fallback carries every parameter through untouched and moved sliders', async ({ page }): Promise<void> => {
+		// Whether the browser exposes navigator.share varies by platform, so the
+		// share-control.tsx branch under test has to be forced rather than hoped
+		// for—this is the same reason listening.spec.ts:44 pins the microphone
+		// grant with an init script instead of trusting what the engine ships.
+		// Registered on the page rather than run once: Playwright reapplies an
+		// init script to every document the page loads, and the round trip below
+		// needs the same stub standing after the `page.goto` partway through it.
+		await page.addInitScript(() => {
+			// `share` lives on Navigator.prototype in WebKit, so
+			// Reflect.deleteProperty(window.navigator, 'share') returns true having
+			// deleted nothing—there is no own property to remove, and the
+			// prototype's getter answers right through it. Shadowing it with an own
+			// property is what actually turns `typeof navigator.share` to
+			// 'undefined' on every engine, WebKit included.
+			Object.defineProperty(window.navigator, 'share', { configurable: true, value: undefined });
+
+			Object.defineProperty(window.navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: (text: string): Promise<void> => {
+						window.__sharedLink = text;
+						return Promise.resolve();
+					},
+				},
+			});
+		});
+
+		await page.goto('./');
+
+		// Pressed before anything moves, which is the case this feature exists to
+		// close: a bare `/` carries no query at all, so a link built from the
+		// address bar would carry nothing either. It has to hold both declared
+		// keys anyway. This press comes first because the round trip below leaves
+		// the address bar already carrying them, and a press after that would pass
+		// against an implementation reading window.location.search—the one thing
+		// #21's second criterion rules out.
+		await page.getByRole('button', { name: 'Share this Scene' }).click();
+		await expect(page.getByRole('status')).toHaveText('Link copied');
+
+		const untouchedLink = await page.evaluate(() => window.__sharedLink);
+		if (untouchedLink === undefined) {
+			throw new Error('writeText was never called');
+		}
+
+		const untouchedParams = new URL(untouchedLink).searchParams;
+		expect(untouchedParams.has('space')).toBe(true);
+		expect(untouchedParams.has('brightness')).toBe(true);
+
+		const space = page.getByRole('slider', { name: 'Space' });
+		const brightness = page.getByRole('slider', { name: 'Brightness' });
+
+		// Both bounds, not two arbitrary points, so both land on the step grid
+		// exactly per the comment on SPACE_DEFAULT above and need no tolerance.
+		await space.focus();
+		await space.press('End');
+		await brightness.focus();
+		await brightness.press('Home');
+		await expect(space).toHaveJSProperty('valueAsNumber', 0.8);
+		await expect(brightness).toHaveJSProperty('valueAsNumber', 0.75);
+
+		await page.getByRole('button', { name: 'Share this Scene' }).click();
+		await expect(page.getByRole('status')).toHaveText('Link copied');
+
+		const movedLink = await page.evaluate(() => window.__sharedLink);
+		if (movedLink === undefined) {
+			throw new Error('writeText was never called');
+		}
+
+		await page.goto(movedLink);
+
+		// Web-first, for the same hydration race the first test in this file
+		// guards against: the link is applied in an effect after paint.
+		await expect(page.getByRole('slider', { name: 'Space' })).toHaveJSProperty('valueAsNumber', 0.8);
+		await expect(page.getByRole('slider', { name: 'Brightness' })).toHaveJSProperty('valueAsNumber', 0.75);
+
+		const movedParams = new URL(movedLink).searchParams;
+		expect(movedParams.has('space')).toBe(true);
+		expect(movedParams.has('brightness')).toBe(true);
+	});
+
+	test('the native share sheet receives one call carrying every parameter', async ({ page }): Promise<void> => {
+		// Defined rather than left to the platform, so every project exercises
+		// the share branch deterministically instead of whichever branch the
+		// engine happens to expose—Firefox has no navigator.share at all.
+		await page.addInitScript(() => {
+			Object.defineProperty(window.navigator, 'share', {
+				configurable: true,
+				value: (data: { url?: string }): Promise<void> => {
+					const calls = window.__shareCalls ?? [];
+					calls.push(data);
+					window.__shareCalls = calls;
+					return Promise.resolve();
+				},
+			});
+		});
+
+		await page.goto('./');
+		await page.getByRole('button', { name: 'Share this Scene' }).click();
+
+		// Polled rather than read once: a successful share shows no status
+		// message (announceShare returns '' and never calls setState), so
+		// there is no visible signal to wait on beside the call landing itself.
+		await expect.poll(() => page.evaluate(() => window.__shareCalls?.length ?? 0)).toBe(1);
+
+		const calls = await page.evaluate(() => window.__shareCalls ?? []);
+		const shared = calls[0];
+		if (shared?.url === undefined) {
+			throw new Error('navigator.share was not called with a url');
+		}
+
+		const params = new URL(shared.url).searchParams;
+		expect(params.has('space')).toBe(true);
+		expect(params.has('brightness')).toBe(true);
 	});
 });

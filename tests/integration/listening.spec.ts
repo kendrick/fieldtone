@@ -49,7 +49,11 @@ test.describe('listen invitation', () => {
 		await page.getByRole('button', { name: 'Play' }).click();
 		await page.getByRole('button', { name: 'Let it listen' }).click();
 
-		await expect(page.getByRole('status')).toHaveText('Listening');
+		// Scoped to the floor because share-control.tsx mounts a live region of its
+		// own, permanently and empty so that a first message is announced. Both are
+		// status roles, so a bare getByRole('status') resolves to two elements the
+		// moment the Invitation is revealed and strict mode refuses to choose.
+		await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText('Listening');
 
 		// Rendered offline so the assertion needs no sound card, and it drives
 		// the same graph playback uses, so a Bed silenced by the microphone
