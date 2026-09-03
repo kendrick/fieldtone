@@ -54,3 +54,34 @@
 		animation-duration: 1ms;
 	}
 }
+
+/* The share confirmation clears itself the same way the floor above waits, and
+   for the same reason: Principle V rules out JS timers, so the message's whole
+   lifetime is a delay plus a fade. `visibility` has to be in the keyframes here
+   too, mirrored: an element faded to zero opacity is still announced, so a
+   screen reader would go on offering "Link copied" long after it left the
+   screen. `both` is what holds the `to` state after the fade ends. */
+@keyframes share-status-fade {
+	from {
+		visibility: visible;
+		opacity: 1;
+	}
+
+	to {
+		visibility: hidden;
+		opacity: 0;
+	}
+}
+
+.share-status[data-shown] {
+	animation: share-status-fade 400ms ease-in 4s both;
+}
+
+/* Duration only, never the delay, matching the Invitation's rule. The 4s is how
+   long the message stays readable, which is the message doing its job; the fade
+   is only decoration. */
+@media (prefers-reduced-motion: reduce) {
+	.share-status[data-shown] {
+		animation-duration: 1ms;
+	}
+}
