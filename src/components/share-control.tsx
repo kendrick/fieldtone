@@ -65,9 +65,18 @@ async function shareLink(link: string): Promise<ShareOutcome> {
 		}
 		catch (error) {
 			if (isDismissal(error)) {
-				// Backing out of the sheet is an answer, not a failure. Copying the
-				// link anyway would hand it to a listener who just declined to send it.
-				return { message: '', link: undefined };
+				// Two outcomes share this name and nothing tells them apart: the
+				// listener backed out of the sheet, or the browser had no share target
+				// to offer (both are `AbortError` per the Web Share spec). So this
+				// says nothing and offers the field.
+				//
+				// Saying nothing is what a dismissal has earned—it is an answer, not a
+				// failure, and "Link copied" against a listener who just declined would
+				// be a lie. Offering the field is what the other case needs, because
+				// silence alone leaves that browser a button that does nothing at all.
+				// The field claims nothing either way, which is the only honest thing
+				// to render when the cause is unknowable.
+				return { message: '', link };
 			}
 		}
 	}

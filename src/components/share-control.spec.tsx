@@ -43,6 +43,17 @@ function expectTotalLink(link: unknown, runtime: SceneRuntime): void {
 	expect([...url.searchParams].sort()).toEqual([...new URLSearchParams(runtime.serializeParameters())].sort());
 }
 
+// Throws rather than returning undefined, so a case asserting on the field says
+// so in its own failure message instead of comparing undefined to a URL.
+function fieldValue(): string {
+	const field = screen.getByRole('textbox', { name: 'Link to this Scene' });
+	if (!(field instanceof HTMLInputElement)) {
+		throw new TypeError('the link field is not an input');
+	}
+
+	return field.value;
+}
+
 async function press(): Promise<void> {
 	// act rather than a bare click: the handler resolves through a promise chain
 	// two or three microtasks deep, and this is what drains it before the
@@ -164,6 +175,11 @@ describe('share-control', () => {
 		// behind nor quietly copies a link the listener declined to share.
 		expect(writeText).not.toHaveBeenCalled();
 		expect(screen.getByRole('status').textContent).toBe('');
+		// The field comes anyway, because `AbortError` is also what a browser with
+		// no share targets rejects with, and the name cannot tell the two apart.
+		// Offering the link asserts nothing about which one happened; staying
+		// silent would leave that browser a button that does nothing at all.
+		expectTotalLink(fieldValue(), runtime);
 	});
 
 	it('falls through to the clipboard when the share sheet fails for any other reason', async () => {
