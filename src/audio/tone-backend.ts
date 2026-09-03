@@ -3,6 +3,7 @@ import type { ParameterValues } from '@/scenes/parameters';
 import type { BedHandle, Scene } from '@/scenes/scene';
 import * as Tone from 'tone';
 import { ListeningRejection } from './audio-backend';
+import { needsRecordSession, requestPlaybackSession, requestRecordSession } from './audio-session';
 import { reasonForCaptureError } from './capture-rejection';
 
 // Every Tone.js call in the app lives here: this is the one AudioBackend that
@@ -19,6 +20,12 @@ import { reasonForCaptureError } from './capture-rejection';
 // level of its own to impose.
 const LEVEL = 1;
 const FADE_SECONDS = 0.3;
+// The fade that covers the switch to `play-and-record`. ADR 0004 measured that
+// switch on device as up to a second of silence followed by a jump in level, so
+// the Bed has to be taken down before it and brought back after it. Same length
+// as FADE_SECONDS by default rather than by derivation—this one answers to what
+// the dropout sounds like on an iPhone, and is expected to be tuned there.
+const SESSION_FADE_SECONDS = 0.3;
 // Long enough for the stop to have taken effect before the nodes go away:
 // disposing a node mid-release cuts the tail the Bed just scheduled.
 const DISPOSE_GRACE_SECONDS = 0.05;
@@ -68,14 +75,6 @@ declare global {
 		// on purpose: a polling loop would burn the thermal budget Principle V
 		// sets aside for the visual layer.
 		__fieldtone?: OutputProbe;
-	}
-}
-
-function requestPlaybackSession(): void {
-	// Safari's default session behaves like `ambient`, which the physical ringer
-	// switch silences. Without this the app looks broken to anyone on mute.
-	if (typeof navigator !== 'undefined' && navigator.audioSession !== undefined) {
-		navigator.audioSession.type = 'playback';
 	}
 }
 
@@ -264,12 +263,54 @@ export function createToneBackend(): ToneBackend {
 		if (navigator.mediaDevices?.getUserMedia === undefined) {
 			throw new ListeningRejection('unavailable');
 		}
+		// The voice this fade is spent on, pinned before the wait. The fade exists to
+		// cover a session switch, so it runs only where one is about to happen: no audio
+		// session at all (every desktop browser, which is why the Chromium suite never
+		// sees a fade) and one already on `play-and-record` both mean no dropout to
+		// cover, and the transition below collapses to the getUserMedia call that
+		// shipped before it.
+		const faded = needsRecordSession() ? voice : undefined;
+		if (faded !== undefined) {
+			faded.envelope.gain.rampTo(0, SESSION_FADE_SECONDS);
+			await new Promise<void>((resolve) => {
+				// The context's own timeout rides Tone's existing ticker against the
+				// audio clock, the same way the teardown in stop() does. A JS timer
+				// would drift away from the ramp it is waiting on, and Principle V
+				// rules one out regardless.
+				Tone.getContext().setTimeout(resolve, SESSION_FADE_SECONDS);
+			});
+			// Stop can land inside the fade, and the fade is what created that window:
+			// before it, nothing was awaited between the press and getUserMedia. The
+			// runtime's orphan recheck releases a microphone opened late, but it cannot
+			// undo a session type, so switching here would leave a listener who stopped
+			// on `play-and-record`, paying the voice-chat volume scale for Listening
+			// that never started.
+			//
+			// Resolving rather than rejecting, because that recheck owns this outcome
+			// either way and a rejection would phrase a stop as something the listener
+			// was refused. Nothing to bring back on the way out: the voice this faded is
+			// already scheduled for disposal, and a stop-then-play in the gap left a
+			// fresh one running its own fade.
+			if (voice !== faded) {
+				return;
+			}
+		}
+		// Outside the fade, because iOS requires the switch and the fade only covers
+		// it: `getUserMedia` rejects outright while the session is still `playback`
+		// (ADR 0004), and a Bed that is not playing has nothing to fade but still
+		// needs the session moved. A no-op where there is no audio session, and where
+		// the switch already happened.
+		//
+		// Putting the fade ahead of this bets that the tap's transient activation
+		// outlives 300ms. The HTML spec sizes that window in seconds and nothing has
+		// measured it here, so a physical iPhone is what settles the bet.
+		requestRecordSession();
 		let opened: MediaStream;
 		try {
-			// First await on the accept path, and the reason nothing enumerates
-			// devices ahead of it: Safari spends the tap on whichever await runs
-			// first, exactly as it spends the play tap on resume. An enumerateDevices
-			// here would take the gesture and hand back unlabeled devices anyway.
+			// Nothing but the fade may come between the tap and this call. Safari
+			// spends the gesture on whichever await runs first, exactly as it spends
+			// the play tap on resume, so an enumerateDevices here would take the
+			// gesture and hand back unlabeled devices anyway.
 			opened = await navigator.mediaDevices.getUserMedia(LISTENING_CONSTRAINTS);
 		}
 		catch (error) {
@@ -277,13 +318,27 @@ export function createToneBackend(): ToneBackend {
 			// it can phrase rather than on a DOMException name that varies by browser.
 			throw new ListeningRejection(reasonForCaptureError(error), { cause: error });
 		}
-		// Held, not wired: connecting the stream to the graph is #27, and the session
-		// type switch iOS needs before capture works at all is #15. Until then this
-		// opens the microphone on desktop and nothing else.
+		finally {
+			// Both paths bring the Bed back: a listener who denies the browser prompt
+			// still paid for the switch, and leaving them in silence would read as the
+			// app breaking. The identity check keeps this off a voice stop() cleared
+			// while we were awaiting—that envelope is already scheduled for disposal,
+			// and a stop-then-play in the gap left a fresh one running its own fade.
+			if (faded !== undefined && voice === faded) {
+				fadeVoiceIn(faded, SESSION_FADE_SECONDS);
+			}
+		}
+		// Held, not wired: connecting the stream to the graph is #27. Until then this
+		// opens the microphone and nothing else, on a session that can now carry it.
 		stream = opened;
 	}
 
 	function stopListening(): void {
+		// The session stays on `play-and-record` deliberately. Switching back would
+		// cost a second audible dropout to undo a mode the listener has already been
+		// through once, and iOS drops its recording indicator on the released track
+		// rather than on the session type, so nothing about Principle I turns on it.
+		//
 		// A track outlives the stream object, so releasing the reference alone leaves
 		// the recording indicator lit. Principle I makes that non-negotiable.
 		for (const track of stream?.getTracks() ?? []) {

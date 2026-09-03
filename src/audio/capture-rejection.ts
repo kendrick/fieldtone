@@ -16,9 +16,11 @@ export function reasonForCaptureError(error: unknown): ListeningRejectionReason 
 		// the listener to plug one in, which is wrong when one is already there.
 		//
 		// iOS raises InvalidStateError for the same reason: `getUserMedia` rejects
-		// outright while the audio session is still `playback`, which is every
-		// session until #15 lands the switch to `play-and-record`. `unavailable`
-		// reads as "not yet on this device" rather than blaming a microphone the
+		// outright while the audio session is still `playback`. The seam now asks
+		// for `play-and-record` before it asks for a microphone, so reaching this
+		// case means the switch did not take—a WebKit that refused it, or one that
+		// accepted the assignment without the session following. `unavailable`
+		// reads as "not on this device" rather than blaming a microphone the
 		// switch never reached.
 		case 'OverconstrainedError':
 		case 'InvalidStateError':
