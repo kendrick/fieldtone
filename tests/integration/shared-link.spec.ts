@@ -110,7 +110,7 @@ test.describe('shared link', () => {
 		await expect(page).toHaveURL(/[?&]space=/);
 	});
 
-	test('the clipboard fallback carries every parameter through moved and untouched sliders', async ({ page }): Promise<void> => {
+	test('the clipboard fallback carries every parameter through untouched and moved sliders', async ({ page }): Promise<void> => {
 		// Whether the browser exposes navigator.share varies by platform, so the
 		// share-control.tsx branch under test has to be forced rather than hoped
 		// for—this is the same reason listening.spec.ts:44 pins the microphone
@@ -139,6 +139,25 @@ test.describe('shared link', () => {
 		});
 
 		await page.goto('./');
+
+		// Pressed before anything moves, which is the case this feature exists to
+		// close: a bare `/` carries no query at all, so a link built from the
+		// address bar would carry nothing either. It has to hold both declared
+		// keys anyway. This press comes first because the round trip below leaves
+		// the address bar already carrying them, and a press after that would pass
+		// against an implementation reading window.location.search—the one thing
+		// #21's second criterion rules out.
+		await page.getByRole('button', { name: 'Share this Scene' }).click();
+		await expect(page.getByRole('status')).toHaveText('Link copied');
+
+		const untouchedLink = await page.evaluate(() => window.__sharedLink);
+		if (untouchedLink === undefined) {
+			throw new Error('writeText was never called');
+		}
+
+		const untouchedParams = new URL(untouchedLink).searchParams;
+		expect(untouchedParams.has('space')).toBe(true);
+		expect(untouchedParams.has('brightness')).toBe(true);
 
 		const space = page.getByRole('slider', { name: 'Space' });
 		const brightness = page.getByRole('slider', { name: 'Brightness' });
@@ -170,22 +189,6 @@ test.describe('shared link', () => {
 		const movedParams = new URL(movedLink).searchParams;
 		expect(movedParams.has('space')).toBe(true);
 		expect(movedParams.has('brightness')).toBe(true);
-
-		// The point of this second press: a link opened from a bare `/` address
-		// bar is the exact gap this feature closes, so pressing again with
-		// nothing moved must still write both declared keys, not just whichever
-		// one a listener happened to touch.
-		await page.getByRole('button', { name: 'Share this Scene' }).click();
-		await expect(page.getByRole('status')).toHaveText('Link copied');
-
-		const untouchedLink = await page.evaluate(() => window.__sharedLink);
-		if (untouchedLink === undefined) {
-			throw new Error('writeText was never called');
-		}
-
-		const untouchedParams = new URL(untouchedLink).searchParams;
-		expect(untouchedParams.has('space')).toBe(true);
-		expect(untouchedParams.has('brightness')).toBe(true);
 	});
 
 	test('the native share sheet receives one call carrying every parameter', async ({ page }): Promise<void> => {
