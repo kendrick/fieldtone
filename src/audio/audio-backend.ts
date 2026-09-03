@@ -4,6 +4,14 @@ import type { Scene } from '@/scenes/scene';
 // The seam between the play button and Tone.js. Everything below the line is
 // synchronous and fire-and-forget, which is what lets a test fake record calls
 // in order and assert on them without a clock.
+
+// The one channel that runs upward instead of down. Every other member here is
+// the runtime telling the backend something; a Control Signal is Listening
+// telling the runtime something, derived from live input rather than chosen by
+// a listener. Naming it (rather than, say, a single fixed "level" channel) is
+// what lets one Scene's Bed react to a signal another Scene never produces.
+export type SignalListener = (name: string, value: number) => void;
+
 export interface AudioBackend {
 	// iOS will not start an AudioContext outside a user gesture, so this has to
 	// be the first await on the click path: anything awaited before it spends
@@ -24,4 +32,9 @@ export interface AudioBackend {
 	// runtime owns no timers (Principle V rules out timers and polling loops).
 	// The audio clock already schedules this precisely; a JS timer would not.
 	stop: (afterSeconds: number) => void;
+	// Returns the unsubscribe rather than exposing a separate `offSignal`, so a
+	// caller that stops caring (a Scene torn down, a control retired) can drop
+	// its own listener without needing to keep the original function reference
+	// around to hand back.
+	onSignal: (listener: SignalListener) => () => void;
 }

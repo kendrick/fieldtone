@@ -4,10 +4,12 @@ import type { AudioBackend } from './audio-backend';
 
 import type { PlaybackState } from './playback-state';
 
+import type { SignalValues } from '@/scenes/control-signals';
 import type { ParameterSchema, ParameterValues } from '@/scenes/parameters';
 import type { Scene } from '@/scenes/scene';
 import { createStore } from 'zustand/vanilla';
 
+import { clampSignalValue, defaultSignalValues, signalOffset } from '@/scenes/control-signals';
 import { deserializeParameterValues, serializeParameterValues } from '@/scenes/parameter-serialization';
 import { clampParameterValue, defaultParameterValues } from '@/scenes/parameters';
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
@@ -20,6 +22,12 @@ export const FADE_OUT_SECONDS = 0.3;
 export interface RuntimeState {
 	readonly playback: PlaybackState;
 	readonly parameters: ParameterValues;
+	// Held apart from `parameters` rather than folded into it, because a Control
+	// Signal moves a parameter without changing the listener's setting. Merge the
+	// two here and the listener's own value is gone the moment the room gets loud.
+	// Their slider would jump under their hand, and the share link would carry
+	// whatever the microphone was hearing.
+	readonly signals: SignalValues;
 }
 
 // zustand's vanilla store types the read side as `ReadonlyStoreApi`, but the
@@ -60,7 +68,57 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 	const store = createStore<RuntimeState>()(() => ({
 		playback: idle,
 		parameters: defaultParameterValues(scene.parameters),
+		// Seeded rather than left empty, so the Bed sounds right before the
+		// microphone Invitation is ever offered: ADR 0004 rests a Scene at its
+		// declared signal defaults whenever input is absent or suspended, and the
+		// first press happens long before anything is listening.
+		signals: defaultSignalValues(scene.controlSignals),
 	}));
+
+	// The one place the listener's values and the signals' readings meet.
+	// Everything upstream holds them apart, and a value combines only on its way
+	// out to the backend, which is what keeps a signal out of the store and out of
+	// a share link.
+	function effectiveParameters(): ParameterValues {
+		const { parameters, signals } = store.getState();
+		// Two passes rather than one, so that several signals bound to one parameter
+		// sum their offsets and the total is clamped once. Clamping inside the loop
+		// instead made the result depend on Object.entries order: a signal that
+		// saturated the parameter at its ceiling swallowed a later one pulling back
+		// down, so two schemas differing only in key order drove different values.
+		// Addition is commutative and the single clamp is applied to the sum, which
+		// is what makes the combined value independent of declaration order.
+		const offsets = new Map<string, number>();
+
+		for (const [name, signal] of Object.entries(scene.controlSignals)) {
+			const signalValue = signals[name];
+
+			// noUncheckedIndexedAccess types both reads as possibly undefined, and the
+			// parameter lookup is a real case: a signal is free to name a parameter its
+			// Scene never declared. There is no min or max to clamp that against, so
+			// the only safe move is to drive nothing.
+			if (signalValue === undefined || scene.parameters[signal.parameter] === undefined) {
+				continue;
+			}
+
+			offsets.set(signal.parameter, (offsets.get(signal.parameter) ?? 0) + signalOffset(signal, signalValue));
+		}
+
+		const combined: Record<string, number> = { ...parameters };
+
+		for (const [parameterName, offset] of offsets) {
+			const declaration = scene.parameters[parameterName];
+			const listenerValue = combined[parameterName];
+
+			if (declaration === undefined || listenerValue === undefined) {
+				continue;
+			}
+
+			combined[parameterName] = clampParameterValue(declaration, listenerValue + offset);
+		}
+
+		return combined;
+	}
 
 	async function start(): Promise<StartResult> {
 		const state = store.getState().playback;
@@ -88,7 +146,7 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 					// here would leave the state on `starting` forever: the caller
 					// discards this promise, so nothing would surface, and every later
 					// press would be turned away as `already-starting`.
-					backend.start(scene, store.getState().parameters);
+					backend.start(scene, effectiveParameters());
 					backend.fadeIn(FADE_IN_SECONDS);
 				}
 				catch (error) {
@@ -134,7 +192,10 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		store.setState({ parameters: { ...store.getState().parameters, [name]: clamped } });
 
 		if (store.getState().playback.status === 'playing') {
-			backend.setParameter(name, clamped);
+			// The graph hears the combined value; the caller gets the listener's. A
+			// slider that settled on the combined one would show the room's reading as
+			// the listener's own setting, and the next drag would start from there.
+			backend.setParameter(name, effectiveParameters()[name] ?? clamped);
 		}
 
 		return { ok: true, value: clamped };
@@ -166,6 +227,44 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 
 		return store.getState().parameters;
 	}
+
+	// Subscribed at creation, not at start: a reading that lands while idle is
+	// still the state of the room, and the next press builds the graph at it.
+	//
+	// The unsubscribe is deliberately dropped. A runtime and the backend under it
+	// are constructed together in runtime.ts and live as long as the module does,
+	// so neither can outlive the other and there is nothing to leak. Holding the
+	// function in a field nothing calls would only imply a teardown SceneRuntime
+	// does not have; the day a runtime becomes disposable, that method is where
+	// this call goes.
+	backend.onSignal((name: string, value: number): void => {
+		const signal = scene.controlSignals[name];
+
+		// A backend is free to derive whatever Listening gives it. A Scene that
+		// declared no use for this one is not an error, so it writes nothing at all:
+		// a store write here would re-render every subscriber for a value no Scene
+		// reads.
+		if (signal === undefined) {
+			return;
+		}
+
+		const clamped = clampSignalValue(value);
+		store.setState({ signals: { ...store.getState().signals, [name]: clamped } });
+
+		if (store.getState().playback.status !== 'playing') {
+			return;
+		}
+
+		const effective = effectiveParameters()[signal.parameter];
+
+		// undefined only where the signal names an undeclared parameter, which
+		// effectiveParameters already skipped. Nothing to forward.
+		if (effective === undefined) {
+			return;
+		}
+
+		backend.setParameter(signal.parameter, effective);
+	});
 
 	return { start, stop, setParameter, getState, schema: scene.parameters, store, serializeParameters, applySerializedParameters };
 }

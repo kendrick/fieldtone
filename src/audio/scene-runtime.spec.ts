@@ -1,4 +1,5 @@
 import type { PlaybackState } from './playback-state';
+import type { ControlSignalDeclaration } from '@/scenes/control-signals';
 import type { Scene } from '@/scenes/scene';
 
 import { describe, expect, it } from 'vitest';
@@ -381,5 +382,225 @@ describe('scene runtime parameter links', (): void => {
 		const result = runtime.applySerializedParameters('level=4');
 
 		expect(result).toEqual({ level: 1 });
+	});
+});
+
+// A Control Signal moves a parameter away from where the listener set it without
+// changing their setting, so the listener's values and the signal's live in
+// separate store fields and meet only where a value is handed to the backend.
+// Every case here is a check on that seam: what the backend hears against what
+// the listener still owns.
+describe('scene runtime control signals', (): void => {
+	// The signal rests at 0 and reaches half the parameter's range. Both numbers
+	// are exact in binary, so a combined value asserts as 0.75 rather than as
+	// 0.7500000000000001. A test that fails on float noise teaches nothing about
+	// modulation.
+	function createModulatedScene(
+		signal: ControlSignalDeclaration = { parameter: 'level', default: 0, reach: 0.5 },
+	): Scene {
+		return createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			{ loudness: signal },
+		);
+	}
+
+	it('forwards one combined value while playing, and nothing else', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0 });
+
+		await runtime.start();
+		backend.emitSignal('loudness', 0.5);
+
+		// One setParameter and no more: a rebuilt graph would show up here as a stop
+		// and a start, and the listener would hear that as a gap.
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'setParameter', name: 'level', value: 0.75 }]);
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0.5 });
+	});
+
+	// The acceptance criterion the whole two-field split exists for: copying a link
+	// during a loud passage must share the Scene the listener chose, not the one
+	// the room was making at that instant.
+	it('leaves the listener values and the share link untouched', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		await runtime.start();
+		backend.emitSignal('loudness', 1);
+
+		expect(runtime.store.getState().parameters).toEqual({ level: 0.5 });
+		expect(runtime.serializeParameters()).toBe('level=0.5');
+	});
+
+	it('stores the listener value but forwards the combined one when a control moves under an active signal', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		await runtime.start();
+		backend.emitSignal('loudness', 0.5);
+		const result = runtime.setParameter('level', 0.25);
+
+		// The result is what the slider settles on, so it has to be the listener's
+		// own value; the offset is not theirs to inherit.
+		expect(result).toEqual({ ok: true, value: 0.25 });
+		expect(runtime.store.getState().parameters).toEqual({ level: 0.25 });
+		expect(backend.commands.slice(4)).toEqual([{ kind: 'setParameter', name: 'level', value: 0.5 }]);
+	});
+
+	it('clamps the combined value to the parameter bounds', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		runtime.setParameter('level', 0.9);
+		await runtime.start();
+		backend.emitSignal('loudness', 1);
+
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'setParameter', name: 'level', value: 1 }]);
+
+		// A signal resting at full scale drives the parameter downward, which is the
+		// only way to reach the floor from this direction.
+		const fallingBackend = createRecordingBackend();
+		const fallingRuntime = createSceneRuntime(
+			fallingBackend,
+			createModulatedScene({ parameter: 'level', default: 1, reach: 0.5 }),
+		);
+
+		fallingRuntime.setParameter('level', 0.2);
+		await fallingRuntime.start();
+		fallingBackend.emitSignal('loudness', 0);
+
+		expect(fallingBackend.commands.slice(3)).toEqual([{ kind: 'setParameter', name: 'level', value: 0 }]);
+	});
+
+	// Listening hands over a raw reading, and a bad one is not hypothetical: an
+	// averaged empty analysis window is NaN, and a NaN reaching a Web Audio param
+	// silences that node for the rest of the session with nothing to trace.
+	it('clamps a reading outside 0..1 before combining it', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		runtime.setParameter('level', 0.25);
+		await runtime.start();
+		backend.emitSignal('loudness', 4);
+		backend.emitSignal('loudness', -3);
+		backend.emitSignal('loudness', Number.NaN);
+
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'setParameter', name: 'level', value: 0.75 },
+			{ kind: 'setParameter', name: 'level', value: 0.25 },
+			{ kind: 'setParameter', name: 'level', value: 0.25 },
+		]);
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0 });
+	});
+
+	// Same rule the listener's own values follow: held in every playback state,
+	// forwarded only where a graph exists to hear them.
+	it('holds a signal arriving while idle and builds the next graph at the combined value', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		backend.emitSignal('loudness', 0.5);
+
+		expect(backend.commands).toEqual([]);
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0.5 });
+
+		await runtime.start();
+
+		expect(backend.commands).toEqual([
+			{ kind: 'resume' },
+			{ kind: 'start', scene: 'silent', parameters: { level: 0.75 } },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
+	});
+
+	it('ignores a signal name the scene never declared', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		await runtime.start();
+		const stateBefore = runtime.store.getState();
+		const commandsBefore = backend.commands;
+		backend.emitSignal('brightness', 0.9);
+
+		// Identity, not equality: a store write that happened to land the same
+		// values would still be a re-render for every subscriber.
+		expect(runtime.store.getState()).toBe(stateBefore);
+		expect(backend.commands).toEqual(commandsBefore);
+	});
+
+	// The guard for a Scene that derives nothing from live input. Every suite
+	// above runs on one, so they carry the real weight here; what this case adds
+	// is the seed the store starts at, which none of them reads.
+	it('leaves a scene with no control signals exactly as it was', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		expect(runtime.store.getState().signals).toEqual({});
+
+		await runtime.start();
+		backend.emitSignal('loudness', 1);
+
+		expect(backend.commands).toEqual([
+			{ kind: 'resume' },
+			{ kind: 'start', scene: 'silent', parameters: {} },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
+	});
+
+	// Two signals on one parameter is the case the combining rule exists for, and
+	// nothing shipped exercises it: Ember declares one. These two schemas are the
+	// same pair of signals in the opposite declaration order, driven identically.
+	// Before offsets were summed the result differed between them, because the
+	// first offset saturated the clamp and the second had nothing left to pull
+	// back down from.
+	function createTwoSignalScene(reversed: boolean): Scene {
+		const lift: ControlSignalDeclaration = { parameter: 'level', default: 0, reach: 1 };
+		const drop: ControlSignalDeclaration = { parameter: 'level', default: 0, reach: -0.5 };
+		return createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			reversed ? { drop, lift } : { lift, drop },
+		);
+	}
+
+	async function driveBothSignals(reversed: boolean): Promise<number | undefined> {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createTwoSignalScene(reversed));
+
+		await runtime.start();
+		backend.emitSignal('lift', 1);
+		backend.emitSignal('drop', 1);
+
+		return backend.commands.filter(command => command.kind === 'setParameter').at(-1)?.value;
+	}
+
+	it('sums the offsets of two signals on one parameter, whatever order they are declared in', async (): Promise<void> => {
+		// 0.5 + 1 - 0.5 = 1.0, which the clamp leaves alone at the parameter's max.
+		expect(await driveBothSignals(false)).toBe(1);
+		expect(await driveBothSignals(true)).toBe(1);
+	});
+
+	it('holds a summed overshoot at the ceiling and leaves the listener value alone', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		// Each signal alone already lifts past the ceiling, so the sum is far past it.
+		// The parameter still lands exactly on max, and the store still holds what the
+		// listener set, which is the separation the whole modulation layer exists for.
+		const runtime = createSceneRuntime(backend, createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			{
+				one: { parameter: 'level', default: 0, reach: 4 },
+				two: { parameter: 'level', default: 0, reach: 4 },
+			},
+		));
+
+		await runtime.start();
+		backend.emitSignal('one', 1);
+		backend.emitSignal('two', 1);
+
+		expect(backend.commands.filter(command => command.kind === 'setParameter').at(-1)?.value).toBe(1);
+		expect(runtime.store.getState().parameters).toEqual({ level: 0.5 });
 	});
 });

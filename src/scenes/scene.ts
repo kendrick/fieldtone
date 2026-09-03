@@ -1,4 +1,5 @@
 import type * as Tone from 'tone';
+import type { ControlSignalSchema } from './control-signals';
 import type { ParameterSchema, ParameterValues } from './parameters';
 
 // An object rather than a bare node, so a Bed gets its destination and its
@@ -42,5 +43,12 @@ export interface Scene {
 	// reader handle an absent schema, and the runtime needs one to seed its store
 	// before anything is playing.
 	readonly parameters: ParameterSchema;
+	// Required too, `{}` for a Scene that derives nothing from live input. Same
+	// argument as `parameters`, plus one of its own: ADR 0004 rests a Scene at its
+	// declared signal defaults whenever input is suspended or absent, and the Bed
+	// has to sound right before the microphone Invitation is ever offered. So the
+	// runtime reads this schema with nothing listening, and an optional one would
+	// put a guard on every read.
+	readonly controlSignals: ControlSignalSchema;
 	readonly shader?: ShaderDeclaration;
 }
