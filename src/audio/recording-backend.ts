@@ -1,6 +1,8 @@
 import type { AudioBackend, SignalListener } from './audio-backend';
+import type { ListeningRejectionReason } from './listening-state';
 import type { ParameterValues } from '@/scenes/parameters';
 import type { Scene } from '@/scenes/scene';
+import { ListeningRejection } from './audio-backend';
 
 // This is the second implementation of the seam. A seam with one implementation
 // is hypothetical; with two, the seam is real. The command list is the
@@ -18,6 +20,8 @@ export type BackendCommand
 		| { kind: 'setParameter'; name: string; value: number }
 		| { kind: 'fadeIn'; seconds: number }
 		| { kind: 'fadeOut'; seconds: number }
+		| { kind: 'startListening' }
+		| { kind: 'stopListening' }
 		| { kind: 'stop'; afterSeconds: number };
 
 export interface RecordingBackend extends AudioBackend {
@@ -35,6 +39,12 @@ export interface RecordingBackend extends AudioBackend {
 // sound. `fail` never relents.
 export type CommandOutcome = 'succeed' | 'fail' | 'fail-once';
 
+// No `fail-once` counterpart here, deliberately. A browser that was told no
+// remembers the answer, so a second accept gets the same one back without
+// another prompt; a fake that relented on the retry would let a test pass
+// against behavior no listener can reach.
+export type ListeningOutcome = 'succeed' | ListeningRejectionReason;
+
 export interface RecordingBackendOptions {
 	resume?: CommandOutcome;
 	// Everything after resume is real Web Audio work in the Tone adapter:
@@ -43,6 +53,10 @@ export interface RecordingBackendOptions {
 	// makes each one happen.
 	start?: CommandOutcome;
 	fadeIn?: CommandOutcome;
+	// Named by outcome rather than by a boolean, so a case reads as the answer the
+	// listener would get: `{ listening: 'no-microphone' }` is the laptop with no
+	// microphone attached.
+	listening?: ListeningOutcome;
 }
 
 function failureGate(outcome: CommandOutcome = 'succeed'): () => boolean {
@@ -74,6 +88,7 @@ export function createRecordingBackend(
 	// loop is iterating it, and so double-subscribing the same function is a
 	// no-op instead of a double call.
 	const signalListeners = new Set<SignalListener>();
+	const listeningOutcome = options.listening ?? 'succeed';
 
 	return {
 		get commands(): readonly BackendCommand[] {
@@ -109,6 +124,18 @@ export function createRecordingBackend(
 		},
 		fadeOut: (seconds: number): void => {
 			recordedCommands.push({ kind: 'fadeOut', seconds });
+		},
+		// A real ListeningRejection rather than a stand-in error: the runtime's job
+		// on this path is to read `reason` off it, and a fake that rejected with a
+		// plain Error would exercise the fallback branch instead of the mapping.
+		startListening: async (): Promise<void> => {
+			recordedCommands.push({ kind: 'startListening' });
+			if (listeningOutcome !== 'succeed') {
+				throw new ListeningRejection(listeningOutcome);
+			}
+		},
+		stopListening: (): void => {
+			recordedCommands.push({ kind: 'stopListening' });
 		},
 		stop: (afterSeconds: number): void => {
 			recordedCommands.push({ kind: 'stop', afterSeconds });
