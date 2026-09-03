@@ -46,10 +46,13 @@ export interface AudioBackend {
 	fadeIn: (seconds: number) => void;
 	fadeOut: (seconds: number) => void;
 	// Opens the microphone, and nothing more: the stream is held but not wired
-	// into the graph. Async because the browser's permission prompt is, and it
-	// has to be the first await on the accept path for the same reason `resume`
-	// does—Safari spends the gesture on whichever await runs first. Rejects
-	// with `ListeningRejection` and nothing else.
+	// into the graph. Async because the browser's permission prompt is, and
+	// because on iOS the audio session has to move to `play-and-record` first,
+	// which is audible enough (ADR 0004) that the Bed is faded down across it.
+	// So the permission prompt is no longer the accept path's first await, and
+	// the bet is that the tap's transient activation outlasts a fade measured in
+	// hundreds of milliseconds—unlike `resume`, where the context itself is what
+	// the gesture buys. Rejects with `ListeningRejection` and nothing else.
 	startListening: () => Promise<void>;
 	// Releases the microphone. A no-op when none is open, so the runtime can
 	// call it on the way out of `stop` without asking first.
