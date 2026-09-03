@@ -138,3 +138,4 @@ yarn.lock
 # Databricks Deploy
 # ============================================
 nee-poc/
+.preview/
