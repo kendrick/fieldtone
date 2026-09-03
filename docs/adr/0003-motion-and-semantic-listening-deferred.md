@@ -14,13 +14,19 @@ An on-device classifier is the only thing that meaningfully improves selective r
 
 It costs a model download, bundle size, sustained CPU against a thermal budget already under pressure, and a perception problem: "it knows when you're talking" reads as invasive even though nothing leaves the device. For an app whose central promise is privacy, that last one is not cheap.
 
-Environment fingerprinting ships in v1 without any of this. RMS distribution, onset density, and Tier 2's band energies separate a café from a train from a quiet room on statistics we already compute, which covers Scene auto-selection.
+Environment fingerprinting needs none of this. RMS distribution, onset density, and Spectral Listening's band energies separate a café from a train from a quiet room, which would cover Scene auto-selection.
 
 ### When to buy the classifier
 
 Revisit only when both hold:
 
 1. In a listening test of ten five-minute sessions across varied environments, more than half of Material mode's re-injected fragments are steady mechanical sound — traffic, HVAC, engine hum — rather than transient human or incidental sound.
-2. Tuning the Tier 1 onset detector and Tier 2 band weighting has already been tried against that ratio and failed to shift it.
+2. Tuning Level Listening's onset detector and Spectral Listening's band weighting has already been tried against that ratio and failed to shift it.
 
 Condition 2 matters more than condition 1. Cheap heuristics get tried first and have to demonstrably cap out. Without that bar, "the re-injections feel boring" becomes a standing argument for buying a model that may not fix it.
+
+## Correction, 2026-09-02
+
+This ADR originally committed environment fingerprinting to v1, resting it on statistics it claimed the app already had. Neither held. No analysis code existed then and none exists now, and the stated payoff was Scene auto-selection, which needs more than one Scene and some way to choose between them. #22 scopes Listening without fingerprinting and carries the reasoning.
+
+The numbered tier labels above were renamed in the same change. They named an escalation this repo defined nowhere; `CONTEXT.md` now defines Level Listening, Spectral Listening and Semantic Listening in their place.
