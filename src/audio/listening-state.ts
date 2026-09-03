@@ -66,6 +66,14 @@ export function abandonOpening(_from: Opening): NotListening {
 	return notListening;
 }
 
+// A refusal is an answer about a Bed that was playing when the listener asked.
+// Stop ends that session, and the answer has nothing left to explain: kept
+// around it holds the Invitation on screen over a stopped Bed, offering a button
+// that can only be turned away by the not-playing guard.
+export function dismissRefusal(_from: Refused): NotListening {
+	return notListening;
+}
+
 export function endListening(_from: Listening): NotListening {
 	return notListening;
 }

@@ -15,7 +15,7 @@ import { clampSignalValue, defaultSignalValues, signalOffset } from '@/scenes/co
 import { deserializeParameterValues, serializeParameterValues } from '@/scenes/parameter-serialization';
 import { clampParameterValue, defaultParameterValues } from '@/scenes/parameters';
 import { ListeningRejection } from './audio-backend';
-import { abandonOpening, beginOpening, completeOpening, endListening, notListening, refused } from './listening-state';
+import { abandonOpening, beginOpening, completeOpening, dismissRefusal, endListening, notListening, refused } from './listening-state';
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
 
 export const FADE_IN_SECONDS = 0.3;
@@ -279,6 +279,15 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		// indicator lit over a silent Bed to advertise it. A no-op when the
 		// listener never accepted the second Invitation.
 		stopListening();
+
+		// A refusal is not a microphone, so stopListening leaves it alone, but it
+		// must not outlive the session either. Left standing it keeps the
+		// Invitation rendered over a stopped Bed, with a button that every press
+		// hands straight back to the not-playing guard.
+		const explained = store.getState().listening;
+		if (explained.status === 'refused') {
+			store.setState({ listening: dismissRefusal(explained) });
+		}
 
 		backend.fadeOut(FADE_OUT_SECONDS);
 		backend.stop(FADE_OUT_SECONDS);

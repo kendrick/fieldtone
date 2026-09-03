@@ -780,6 +780,23 @@ describe('scene runtime listening', (): void => {
 		]);
 	});
 
+	// A refusal explains a microphone the listener asked for while the Bed was
+	// playing. Stop ends that session, so the explanation goes with it: leaving
+	// `refused` behind keeps the Invitation on screen over a stopped Bed, where
+	// its button can only hit the not-playing guard and do nothing.
+	it('clears a refusal when the Bed stops, so no explanation outlives it', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: 'no-microphone' });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		await runtime.startListening();
+		expect(runtime.store.getState().listening).toEqual({ status: 'refused', reason: 'no-microphone' });
+
+		runtime.stop();
+
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+	});
+
 	// The same race with the opposite answer. Nothing needs closing here, but the
 	// Invitation must not surface a refusal either: the listener stopped the app,
 	// and a message about the microphone on a stopped Bed answers a question they

@@ -2,7 +2,7 @@ import type { Refused } from './listening-state';
 
 import { describe, expect, it } from 'vitest';
 
-import { abandonOpening, beginOpening, completeOpening, endListening, notListening, refused } from './listening-state';
+import { abandonOpening, beginOpening, completeOpening, dismissRefusal, endListening, notListening, refused } from './listening-state';
 
 describe('listening state transitions', (): void => {
 	it('walks the full round trip from not listening to listening and back', (): void => {
@@ -23,6 +23,12 @@ describe('listening state transitions', (): void => {
 		expect(refused(opening, 'no-microphone')).toEqual({ status: 'refused', reason: 'no-microphone' });
 		expect(refused(opening, 'busy')).toEqual({ status: 'refused', reason: 'busy' });
 		expect(refused(opening, 'unavailable')).toEqual({ status: 'refused', reason: 'unavailable' });
+	});
+
+	it('leaves a refusal for a stopped session', (): void => {
+		const busy: Refused = { status: 'refused', reason: 'busy' };
+
+		expect(dismissRefusal(busy)).toEqual({ status: 'not-listening' });
 	});
 
 	it('allows a retry: beginOpening accepts a refused state', (): void => {
