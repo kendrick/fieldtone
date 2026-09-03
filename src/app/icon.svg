@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="FieldTone">
+	<defs>
+		<clipPath id="return-solid"><rect x="0" y="0" width="512" height="243"/></clipPath>
+		<clipPath id="return-ring"><rect x="0" y="269" width="512" height="243"/></clipPath>
+	</defs>
+	<rect width="512" height="512" fill="#09090b"/>
+	<g transform="rotate(-20 256 256)">
+		<g clip-path="url(#return-solid)"><circle cx="240" cy="256" r="178" fill="#fafafa"/></g>
+		<g clip-path="url(#return-ring)"><circle cx="272" cy="256" r="143" fill="none" stroke="#fafafa" stroke-width="70"/></g>
+	</g>
+</svg>
