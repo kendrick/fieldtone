@@ -3,7 +3,7 @@
 import type { ReactElement } from 'react';
 
 import type { SceneRuntime } from '@/audio/scene-runtime';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import { sceneRuntime } from '@/audio/runtime';
 import { cn } from '@/lib/utils';
@@ -23,9 +23,11 @@ interface ShareOutcome {
 }
 
 interface ShareStatus extends ShareOutcome {
-	// Keys the message element, so that a second press builds a new one. Without
-	// that, both presses share an element, and an animation already partway
-	// through its delay does not restart just because the text was rewritten.
+	// The press this outcome came from, doing two jobs. It keys the message
+	// element, so that a second press builds a new one: without that, both presses
+	// share an element, and an animation already partway through its delay does
+	// not restart just because the text was rewritten. It is also the token the
+	// stale-completion guard below compares against.
 	press: number;
 }
 
@@ -96,14 +98,27 @@ async function shareLink(link: string): Promise<ShareOutcome> {
 
 export function ShareControl({ runtime = sceneRuntime }: ShareControlProps): ReactElement {
 	const fieldId = useId();
+	const latestPressRef = useRef(0);
 	const [status, setStatus] = useState<ShareStatus>({ message: '', link: undefined, press: 0 });
 
-	async function announceShare(link: string): Promise<void> {
-		// Written on every press, including the silent ones. A press supersedes
-		// whatever the last one left behind, which is what takes the fallback field
-		// off screen the moment a later press no longer needs it.
+	async function announceShare(link: string, press: number): Promise<void> {
 		const outcome = await shareLink(link);
-		setStatus(previous => ({ ...outcome, press: previous.press + 1 }));
+		// Only the newest press may write, because two can be in flight at once and
+		// they do not settle in order. A share sheet holds its promise open for as
+		// long as it is on screen, and a second press made underneath it rejects
+		// with `InvalidStateError` (the spec's answer to a share already running)
+		// and reaches the clipboard first. Without this guard the first sheet's
+		// dismissal would then land on top and replace the answer the listener had
+		// already been given, carrying a link built before whatever they moved in
+		// between.
+		if (press !== latestPressRef.current) {
+			return;
+		}
+
+		// Written on every press that gets this far, including the silent ones. A
+		// press supersedes whatever the last one left behind, which is what takes
+		// the fallback field off screen once a later press no longer needs it.
+		setStatus({ ...outcome, press });
 	}
 
 	function handleClick(): void {
@@ -118,9 +133,14 @@ export function ShareControl({ runtime = sceneRuntime }: ShareControlProps): Rea
 		// drift the day a default is retuned—which is exactly what a link copied out
 		// of a bare `/` address bar does. Nothing stale in the query survives either.
 		url.search = runtime.serializeParameters();
+		// Bumped synchronously, so this press already holds the newest token by the
+		// time any earlier one can settle. A ref rather than state because nothing
+		// renders from it, and a re-render between the bump and the await would be
+		// one more thing between the gesture and `navigator.share`.
+		latestPressRef.current += 1;
 		// Await nothing before this call. `navigator.share` needs the transient user
 		// activation this press carries, and an await ahead of it spends the gesture.
-		void announceShare(url.href);
+		void announceShare(url.href, latestPressRef.current);
 	}
 
 	return (

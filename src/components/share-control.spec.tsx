@@ -195,6 +195,40 @@ describe('share-control', () => {
 		expect(screen.getByRole('status').textContent).toBe('Link copied');
 	});
 
+	it('lets the newest press win when an older one settles late', async () => {
+		let rejectFirst: ((reason: Error) => void) | undefined;
+		const writeText = vi.fn<(text: string) => Promise<void>>()
+			.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+				rejectFirst = reject;
+			}))
+			.mockResolvedValue(undefined);
+		stubWriteText(writeText);
+		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
+		render(<ShareControl runtime={runtime} />);
+
+		// Two presses in flight at once. The second settles first, which is the
+		// order a share sheet produces: it holds its promise open for as long as it
+		// is on screen while a second press rejects immediately and reaches the
+		// clipboard underneath it.
+		await press();
+		await press();
+		expect(screen.getByRole('status').textContent).toBe('Link copied');
+
+		if (rejectFirst === undefined) {
+			throw new Error('the first write never started');
+		}
+
+		const reject = rejectFirst;
+		await act(async () => {
+			reject(new Error('denied'));
+		});
+
+		// The stale failure must not reopen a question the newer press already
+		// answered, and must not put an older snapshot of the link on screen.
+		expect(screen.getByRole('status').textContent).toBe('Link copied');
+		expect(screen.queryByRole('textbox', { name: 'Link to this Scene' })).toBeNull();
+	});
+
 	it('leaves playback and every parameter exactly where the listener left them', async () => {
 		const backend = createRecordingBackend();
 		const runtime = createSceneRuntime(backend, createSilentScene('silent', emberParameters));
