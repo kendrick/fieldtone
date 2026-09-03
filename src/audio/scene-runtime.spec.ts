@@ -641,6 +641,24 @@ describe('scene runtime listening', (): void => {
 		expect(backend.commands.slice(3)).toEqual([{ kind: 'startListening' }]);
 	});
 
+	// The fake used to make every outcome permanent, which meant nothing could
+	// prove a second press reaches the microphone after a transient refusal. A
+	// sequence is what lets a test stand in for the microphone getting plugged in
+	// between one press and the next, the way `worthAnotherPress` in the
+	// Invitation promises the listener it will.
+	it('drives a transient rejection then a grant across two presses, from one sequence', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: ['no-microphone', 'succeed'] });
+		const runtime = createSceneRuntime(backend, silentScene);
+
+		await runtime.start();
+		const firstPress = await runtime.startListening();
+		const secondPress = await runtime.startListening();
+
+		expect(firstPress).toEqual({ ok: false, reason: 'no-microphone' });
+		expect(secondPress).toEqual({ ok: true });
+		expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+	});
+
 	// The seam promises a ListeningRejection and nothing else, but a promise is not
 	// a guarantee: an adapter bug throws a TypeError like anything else does. The
 	// listener still needs a message, and `unavailable` is the one that does not

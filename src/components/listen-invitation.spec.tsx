@@ -1,5 +1,4 @@
-import type { ListeningRejectionReason } from '@/audio/listening-state';
-import type { RecordingBackend } from '@/audio/recording-backend';
+import type { ListeningOutcome, RecordingBackend } from '@/audio/recording-backend';
 
 import type { SceneRuntime } from '@/audio/scene-runtime';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -46,7 +45,7 @@ interface PlayingRuntime {
 
 // The Invitation is offered only over a Bed that is already playing, so nearly
 // every case here has to get the runtime there before the first render.
-async function playingRuntime(listening?: ListeningRejectionReason): Promise<PlayingRuntime> {
+async function playingRuntime(listening?: ListeningOutcome | readonly ListeningOutcome[]): Promise<PlayingRuntime> {
 	const backend = createRecordingBackend(listening === undefined ? {} : { listening });
 	const runtime = createSceneRuntime(backend, createSilentScene('silent'));
 	await runtime.start();
@@ -170,6 +169,21 @@ describe('listen-invitation', () => {
 
 		expect(message.getAttribute('role')).toBe('status');
 		expect(screen.getByRole('button', { name: 'Let it listen' })).toBeDefined();
+	});
+
+	// The pair `worthAnotherPress` keeps the button alive for. Nothing before this
+	// proved the second press actually reaches the microphone rather than just
+	// staying clickable.
+	it('reaches Stop listening on the second press after a busy microphone', async () => {
+		const { runtime } = await playingRuntime(['busy', 'succeed']);
+		render(<ListenInvitation runtime={runtime} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+		await screen.findByText(/another app/i);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+
+		expect(await screen.findByRole('button', { name: 'Stop listening' })).toBeDefined();
 	});
 
 	it('stops offering when the browser cannot open a microphone at all', async () => {
