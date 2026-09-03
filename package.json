@@ -20,7 +20,7 @@
 		"lint:fix": "eslint . --fix",
 		"prepare": "husky",
 		"pretest:e2e": "next build",
-		"preview": "serve out --listen 3000 --no-clipboard",
+		"preview": "rm -rf .preview && mkdir -p .preview && cp -R out .preview/fieldtone && serve .preview --listen 3000 --no-clipboard",
 		"test": "vitest run",
 		"test:e2e": "playwright test",
 		"test:watch": "vitest",

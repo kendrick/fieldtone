@@ -3,7 +3,7 @@ import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, readLevel, renderBedRms } 
 
 test.describe('scene parameters', () => {
 	test('dragging Brightness to its maximum keeps the Scene playing and audible', async ({ page }): Promise<void> => {
-		await page.goto('/');
+		await page.goto('./');
 		await page.getByRole('button', { name: 'Play' }).click();
 		await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
 

@@ -3,7 +3,7 @@ import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, readLevel, renderBedFinger
 
 test.describe('audible output', () => {
 	test('the bed renders as sound rather than silence', async ({ page }): Promise<void> => {
-		await page.goto('/');
+		await page.goto('./');
 		// The probe is installed on the first press, so play before rendering.
 		await page.getByRole('button', { name: 'Play' }).click();
 		await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
@@ -15,7 +15,7 @@ test.describe('audible output', () => {
 	});
 
 	test('two renders of the bed do not come back identical', async ({ page }): Promise<void> => {
-		await page.goto('/');
+		await page.goto('./');
 		await page.getByRole('button', { name: 'Play' }).click();
 		await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
 
@@ -36,7 +36,7 @@ test.describe('audible output', () => {
 	});
 
 	test('play makes sound, stop silences it, and play works again', async ({ page }): Promise<void> => {
-		await page.goto('/');
+		await page.goto('./');
 		await page.getByRole('button', { name: 'Play' }).click();
 		await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
 

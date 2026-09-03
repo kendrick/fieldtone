@@ -12,7 +12,7 @@ const SPACE_DEFAULT = 0.35;
 
 test.describe('shared link', () => {
 	test('a link applies its values and the resulting graph is audible', async ({ page }): Promise<void> => {
-		await page.goto('/?space=0&brightness=3');
+		await page.goto('./?space=0&brightness=3');
 
 		// Web-first assertions throughout, never a one-shot read after goto: the
 		// link is applied in an effect after hydration, so both sliders paint at
@@ -52,7 +52,7 @@ test.describe('shared link', () => {
 	});
 
 	test('a mangled link falls back and still plays', async ({ page }): Promise<void> => {
-		await page.goto('/?space=banana&brightness=99&bogus=1');
+		await page.goto('./?space=banana&brightness=99&bogus=1');
 
 		// Brightness first, and deliberately: 99 clamps to the max of 3, which is a
 		// visible move off the 1 the slider paints before hydration, so it is the
@@ -81,7 +81,7 @@ test.describe('shared link', () => {
 	});
 
 	test('committing a slider writes every parameter to the address bar', async ({ page }): Promise<void> => {
-		await page.goto('/');
+		await page.goto('./');
 
 		const brightness = page.getByRole('slider', { name: 'Brightness' });
 		await brightness.focus();
