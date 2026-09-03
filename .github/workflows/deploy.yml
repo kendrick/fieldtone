@@ -1,0 +1,70 @@
+# Publishes the static export to GitHub Pages. Pages must be configured with
+# "GitHub Actions" as its source in repo settings; this workflow cannot enable it.
+#
+# Deploys on push to main without re-running the suite. Main only moves through
+# pull requests, and ci.yml has already run against the merge result, so gating
+# this on a second full run would double the wait to publish a commit that is
+# already green.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Queue deploys rather than cancelling them. A cancelled deploy leaves Pages on
+# whatever shipped last, which is worse than waiting for the one in front.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build static export
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          PAGES_BASE_PATH: /fieldtone
+
+      # The e2e suite runs against a root-served export, so nothing else checks
+      # that the base path actually reached the output. A build that silently
+      # dropped it would deploy a page whose every asset 404s.
+      - name: Check the base path reached the output
+        run: |
+          grep -q '/fieldtone/_next/' out/index.html \
+            || { echo "PAGES_BASE_PATH did not reach the build output"; exit 1; }
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
