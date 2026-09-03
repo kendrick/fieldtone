@@ -279,6 +279,21 @@ export function createToneBackend(): ToneBackend {
 				// rules one out regardless.
 				Tone.getContext().setTimeout(resolve, SESSION_FADE_SECONDS);
 			});
+			// Stop can land inside the fade, and the fade is what created that window:
+			// before it, nothing was awaited between the press and getUserMedia. The
+			// runtime's orphan recheck releases a microphone opened late, but it cannot
+			// undo a session type, so switching here would leave a listener who stopped
+			// on `play-and-record`, paying the voice-chat volume scale for Listening
+			// that never started.
+			//
+			// Resolving rather than rejecting, because that recheck owns this outcome
+			// either way and a rejection would phrase a stop as something the listener
+			// was refused. Nothing to bring back on the way out: the voice this faded is
+			// already scheduled for disposal, and a stop-then-play in the gap left a
+			// fresh one running its own fade.
+			if (voice !== faded) {
+				return;
+			}
 		}
 		// Outside the fade, because iOS requires the switch and the fade only covers
 		// it: `getUserMedia` rejects outright while the session is still `playback`
