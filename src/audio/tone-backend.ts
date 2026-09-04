@@ -26,6 +26,13 @@ const FADE_SECONDS = 0.3;
 // as FADE_SECONDS by default rather than by derivation—this one answers to what
 // the dropout sounds like on an iPhone, and is expected to be tuned there.
 const SESSION_FADE_SECONDS = 0.3;
+// The silence the platform imposes after the switch, which ADR 0004 measured on
+// device as roughly half a second to a second. The Bed waits it out before it
+// fades back, because a ramp started the moment the switch returns runs to
+// completion inside a dropout the listener is still hearing, and audio would
+// come back at full level rather than fading in. A guess out of a range measured
+// once on one device, and only a phone can tune it.
+const SESSION_SWITCH_DROPOUT_SECONDS = 0.7;
 // Long enough for the stop to have taken effect before the nodes go away:
 // disposing a node mid-release cuts the tail the Bed just scheduled.
 const DISPOSE_GRACE_SECONDS = 0.05;
@@ -256,6 +263,20 @@ export function createToneBackend(): ToneBackend {
 		voice.envelope.gain.rampTo(0, seconds);
 	}
 
+	// Hands the timeout id back so a denial can cancel a return that has not fired
+	// yet, rather than let it ramp the Bed up into a session about to switch back.
+	// Inside the factory because it reads `voice`. The identity check belongs in
+	// the callback rather than out here: a stop-then-play landing in the dropout
+	// leaves a fresh voice running its own fade, and ramping the old envelope
+	// would fight it.
+	function bringBackAfterSwitch(faded: Voice): number {
+		return Tone.getContext().setTimeout(() => {
+			if (voice === faded) {
+				fadeVoiceIn(faded, SESSION_FADE_SECONDS);
+			}
+		}, SESSION_SWITCH_DROPOUT_SECONDS);
+	}
+
 	async function startListening(): Promise<void> {
 		// The absent-API case never reaches getUserMedia, so nothing maps it for us.
 		// It is `unavailable` for the same reason an unrecognized DOMException name
@@ -269,7 +290,12 @@ export function createToneBackend(): ToneBackend {
 		// sees a fade) and one already on `play-and-record` both mean no dropout to
 		// cover, and the transition below collapses to the getUserMedia call that
 		// shipped before it.
-		const faded = needsRecordSession() ? voice : undefined;
+		//
+		// Two bindings rather than one, because they differ when nothing is playing:
+		// `switching` says the session has to move and so a denial has to move it
+		// back, `faded` says there is a Bed to fade across the move.
+		const switching = needsRecordSession();
+		const faded = switching ? voice : undefined;
 		if (faded !== undefined) {
 			faded.envelope.gain.rampTo(0, SESSION_FADE_SECONDS);
 			await new Promise<void>((resolve) => {
@@ -305,6 +331,14 @@ export function createToneBackend(): ToneBackend {
 		// outlives 300ms. The HTML spec sizes that window in seconds and nothing has
 		// measured it here, so a physical iPhone is what settles the bet.
 		requestRecordSession();
+		// Scheduled before the prompt, not after it. `getUserMedia` stays pending for
+		// as long as the permission prompt is on screen, which the listener can leave
+		// up indefinitely, so anything waiting on that promise holds the Bed at
+		// silence until they answer. CONTEXT.md defines the Bed as the layer that
+		// plays whether or not permission is granted, and it cannot do that from
+		// behind a prompt. Registering the timeout is synchronous, so it takes
+		// nothing from the tap's activation on the way to the call below.
+		const returning = faded !== undefined ? bringBackAfterSwitch(faded) : undefined;
 		let opened: MediaStream;
 		try {
 			// Nothing but the fade may come between the tap and this call. Safari
@@ -314,19 +348,37 @@ export function createToneBackend(): ToneBackend {
 			opened = await navigator.mediaDevices.getUserMedia(LISTENING_CONSTRAINTS);
 		}
 		catch (error) {
+			// Every rejection reason means no microphone, so none of them has earned
+			// `play-and-record`. ADR 0004 charges the voice-chat volume scale to the
+			// person who asked for a microphone at the moment they asked, and someone
+			// who was denied asked without receiving. Nothing else puts the type back:
+			// `stopListening` leaves it alone on purpose, and resume() is the only
+			// other caller of `requestPlaybackSession`. Guarded on `switching` because
+			// a path that moved nothing has nothing to undo.
+			if (switching) {
+				if (returning !== undefined) {
+					Tone.getContext().clearTimeout(returning);
+				}
+				if (faded !== undefined && voice === faded) {
+					// The reverse switch needs a fade of its own, because the envelope is
+					// no longer at zero: the scheduled return may have fired, and may be
+					// partway through its ramp. Same audio-clock await as the fade down.
+					faded.envelope.gain.rampTo(0, SESSION_FADE_SECONDS);
+					await new Promise<void>((resolve) => {
+						Tone.getContext().setTimeout(resolve, SESSION_FADE_SECONDS);
+					});
+				}
+				requestPlaybackSession();
+				if (faded !== undefined) {
+					bringBackAfterSwitch(faded);
+				}
+			}
 			// One error type out of this seam, so the Invitation branches on a reason
 			// it can phrase rather than on a DOMException name that varies by browser.
+			// The reverse switch above delays this throw by a fade, and the Invitation
+			// holds "Asking your browser for the microphone." across it. A stop landing
+			// in that window still belongs to the runtime's orphan recheck.
 			throw new ListeningRejection(reasonForCaptureError(error), { cause: error });
-		}
-		finally {
-			// Both paths bring the Bed back: a listener who denies the browser prompt
-			// still paid for the switch, and leaving them in silence would read as the
-			// app breaking. The identity check keeps this off a voice stop() cleared
-			// while we were awaiting—that envelope is already scheduled for disposal,
-			// and a stop-then-play in the gap left a fresh one running its own fade.
-			if (faded !== undefined && voice === faded) {
-				fadeVoiceIn(faded, SESSION_FADE_SECONDS);
-			}
 		}
 		// Held, not wired: connecting the stream to the graph is #27. Until then this
 		// opens the microphone and nothing else, on a session that can now carry it.
