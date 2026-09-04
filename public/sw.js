@@ -64,16 +64,25 @@ async function cacheFirst(request) {
 	// a rejected promise, which Chrome reports as an unhandled rejection per request
 	// and which buries every other console message. An error response says the same
 	// thing to the caller without the noise.
+	let response;
 	try {
-		const response = await fetch(request);
-		if (response.ok) {
-			const cache = await caches.open(CACHE);
-			await cache.put(request, response.clone());
-		}
-		return response;
+		response = await fetch(request);
 	} catch {
 		return Response.error();
 	}
+	if (response.ok) {
+		try {
+			const cache = await caches.open(CACHE);
+			await cache.put(request, response.clone());
+		} catch {
+			// Persistence is best effort, and it has more ways to fail here than it
+			// looks: quota is per origin and this one carries several other project
+			// sites, Safari evicts hard, and activate can delete the cache out from
+			// under a put. None of that is a reason to withhold a response the
+			// network already returned, which would fail the load while online.
+		}
+	}
+	return response;
 }
 
 self.addEventListener('install', (event) => {
