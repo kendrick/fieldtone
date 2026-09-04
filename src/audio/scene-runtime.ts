@@ -52,7 +52,7 @@ export type StopResult = { ok: true } | { ok: false; reason: 'not-playing' };
 // union rather than unpacking a nested result to find out the browser said no.
 export type StartListeningResult
 	= { ok: true }
-		| { ok: false; reason: 'not-playing' | 'session-ended' | 'already-opening' | 'already-listening' | ListeningRejectionReason };
+		| { ok: false; reason: 'not-playing' | 'session-ended' | 'already-opening' | 'already-listening' | 'stopped-listening' | ListeningRejectionReason };
 
 export type StopListeningResult = { ok: true } | { ok: false; reason: 'not-listening' };
 
@@ -256,19 +256,41 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 					orphaned = 'not-playing';
 				}
 
+				// Whether this attempt still owns the listening state. stopListening()
+				// reaches `opening` now, so a stop landing mid-flight has already closed
+				// the microphone and moved the store on. Identity rather than status,
+				// because a listener who stopped and accepted again is in `opening` too
+				// and that one is not ours to finish.
+				const abandoned = store.getState().listening !== opening;
+
 				if (orphaned !== undefined) {
 					// Called on the refused path too, not just the granted one. The seam
 					// documents it as a no-op when no microphone is open, so the cost is
 					// nothing and one exit from a race is easier to trust than two that
 					// differ only where the difference cannot be observed.
 					backend.stopListening();
-					store.setState({ listening: abandonOpening(opening) });
+					if (!abandoned) {
+						store.setState({ listening: abandonOpening(opening) });
+					}
 					return { ok: false, reason: orphaned };
 				}
 
 				if (rejection !== undefined) {
-					store.setState({ listening: refused(opening, rejection) });
+					// An abandoned attempt has no session left to explain, and writing a
+					// refusal here would put a message on screen about a microphone the
+					// listener already stopped asking for.
+					if (!abandoned) {
+						store.setState({ listening: refused(opening, rejection) });
+					}
 					return { ok: false, reason: rejection };
+				}
+
+				// A grant that arrived after the listener stopped listening while the Bed
+				// kept playing. The orphan checks above miss it because the session never
+				// ended, so this is the only place left to hand the microphone back.
+				if (abandoned) {
+					backend.stopListening();
+					return { ok: false, reason: 'stopped-listening' };
 				}
 
 				store.setState({ listening: completeOpening(opening) });
@@ -281,6 +303,21 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 
 	function stopListening(): StopListeningResult {
 		const state = store.getState().listening;
+
+		// `opening` closes a microphone too, which it could not before #27. The
+		// backend now holds the stream from the moment the grant lands, and that is
+		// before startListening resolves, so an accept still in flight can be sitting
+		// on a live track. Waiting for that promise is not an option: it is a module
+		// fetch, and one that never settles would hold the microphone open for the
+		// life of the page with Principle I saying it may not.
+		//
+		// The attempt itself is left to finish on its own. It rechecks the store on
+		// the way out and releases anything the grant handed it after this point.
+		if (state.status === 'opening') {
+			backend.stopListening();
+			store.setState({ listening: abandonOpening(state) });
+			return { ok: true };
+		}
 
 		if (state.status !== 'listening') {
 			return { ok: false, reason: 'not-listening' };

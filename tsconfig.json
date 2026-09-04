@@ -9,6 +9,10 @@
 		"paths": {
 			"@/*": ["./src/*"]
 		},
+		// For public/worklets/*.js below. `checkJs` stays off: a worklet is plain JS
+		// because no bundler ever sees it, and checking it would mean carrying JSDoc
+		// annotations for types that exist nowhere else in the repo.
+		"allowJs": true,
 		"plugins": [{ "name": "next" }]
 	},
 	"include": [
@@ -19,6 +23,9 @@
 		"src/**/*.tsx",
 		"tests/**/*.ts",
 		"tests/**/*.tsx",
+		// Served as a static asset, never bundled, but a spec imports it and TS
+		// cannot resolve a file it was never told about.
+		"public/worklets/*.js",
 		"*.config.ts",
 		"*.config.mjs"
 	],
