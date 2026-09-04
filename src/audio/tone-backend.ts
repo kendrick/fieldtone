@@ -46,6 +46,22 @@ const LISTENING_CONSTRAINTS: MediaStreamConstraints = {
 	audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false },
 };
 
+// The name public/worklets/level-listening.js registers its processor under, and
+// the path it is served from.
+const LEVEL_LISTENING_PROCESSOR = 'level-listening';
+const LEVEL_LISTENING_MODULE = 'worklets/level-listening.js';
+
+// What the worklet posts up its port. Declared here rather than imported,
+// because the worklet is plain JS served as a static asset and no bundler ever
+// sees the two files together. Nothing but agreement keeps the two ends in step.
+//
+// A name no Scene declared is normal traffic—`onset` is here for Recognition and
+// Ember has no use for it—so nothing filters on the way through.
+interface SignalMessage {
+	readonly name: string;
+	readonly value: number;
+}
+
 interface Voice {
 	handle: BedHandle;
 	envelope: Tone.Gain;
@@ -59,6 +75,10 @@ interface Output {
 interface OutputProbe {
 	readOutputLevel: () => number;
 	readContextTime: () => number;
+	// The last value Listening emitted under this name, and 0 for a name never
+	// seen. A signal resting at silence reads 0 as well, which no caller has to
+	// separate: the suite reading this polls until a value moves.
+	readSignal: (name: string) => number;
 	renderBedRms: (seconds?: number) => Promise<number>;
 	renderBedFingerprint: (seconds?: number) => Promise<number[]>;
 }
@@ -138,14 +158,26 @@ export function createToneBackend(): ToneBackend {
 	// reason: the offline probe then measures what the listener has rather than
 	// the Scene's defaults, which is the difference between an oracle and a demo.
 	let currentParameters: ParameterValues = {};
-	// Registration only, for now: nothing in this file ever calls a listener.
-	// Deriving a Control Signal from Listening and emitting it is the next
-	// ticket (#27); this set is what that ticket's emission lands against
-	// without the subscribe side changing too.
+	// Every reading Level Listening posts is fanned out here, unfiltered. Which
+	// names a Scene has a use for is the runtime's question, not this file's. The
+	// adapter reports what the microphone gives it, and a Scene's declarations
+	// decide what any of it drives.
 	const signalListeners = new Set<SignalListener>();
+	// The last value per name, kept for the probe. The runtime holds the copy the
+	// app runs on, in its own store; this one answers a suite that has no ears and
+	// needs to see that a reading arrived at all.
+	const lastSignalValues = new Map<string, number>();
 	// The open microphone, or nothing. Closure state like the rest, which is what
 	// lets stopListening be a no-op rather than something the caller has to guard.
 	let stream: MediaStream | undefined;
+	// The two nodes that carry the microphone into Level Listening, held so
+	// stopListening can take them down. Native Web Audio nodes rather than Tone
+	// ones, because Principle IV puts the analysis in a raw worklet and Tone has no
+	// wrapper for a processor it did not register itself.
+	let listeningInput: MediaStreamAudioSourceNode | undefined;
+	let levelListening: AudioWorkletNode | undefined;
+	// The worklet module load, remembered so a stop-then-listen refetches nothing.
+	let levelListeningModule: Promise<void> | undefined;
 
 	function readOutputLevel(): number {
 		if (output === undefined) {
@@ -153,6 +185,10 @@ export function createToneBackend(): ToneBackend {
 		}
 		const value: number | number[] = output.meter.getValue();
 		return Array.isArray(value) ? (value[0] ?? 0) : value;
+	}
+
+	function readSignal(name: string): number {
+		return lastSignalValues.get(name) ?? 0;
 	}
 
 	// Both render probes answer empty rather than throw when no Scene has started:
@@ -189,6 +225,7 @@ export function createToneBackend(): ToneBackend {
 	const probe: OutputProbe = {
 		readContextTime,
 		readOutputLevel,
+		readSignal,
 		renderBedRms,
 		renderBedFingerprint,
 	};
@@ -254,6 +291,26 @@ export function createToneBackend(): ToneBackend {
 			return;
 		}
 		voice.envelope.gain.rampTo(0, seconds);
+	}
+
+	// Reaching past Tone to the raw context, and caching the promise here, because
+	// `Tone.getContext().addAudioWorkletModule` keeps one `_workletPromise` per
+	// context and awaits whichever URL reached it first. Tone registers its own
+	// worklets in this same context, so that call would either swallow this URL or
+	// block Tone's from ever registering, depending on which one got there first.
+	// `rawContext` is on Tone's public surface and its `audioWorklet` carries no
+	// such cache.
+	//
+	// The specifier stays relative, which is what keeps `/fieldtone` out of this
+	// file: `next.config.ts` sets that as the basePath and manifest.ts is the one
+	// place allowed to write it by hand. The app has a single route, so
+	// `document.baseURI` is this page and the worklet resolves under whatever base
+	// the export is served from.
+	function loadLevelListeningModule(): Promise<void> {
+		levelListeningModule ??= Tone.getContext().rawContext.audioWorklet.addModule(
+			new URL(LEVEL_LISTENING_MODULE, document.baseURI).href,
+		);
+		return levelListeningModule;
 	}
 
 	async function startListening(): Promise<void> {
@@ -328,9 +385,41 @@ export function createToneBackend(): ToneBackend {
 				fadeVoiceIn(faded, SESSION_FADE_SECONDS);
 			}
 		}
-		// Held, not wired: connecting the stream to the graph is #27. Until then this
-		// opens the microphone and nothing else, on a session that can now carry it.
+		// Held before the module load rather than after it. A Stop landing inside that
+		// await still has to find tracks to stop, and `stream` is the only thing
+		// stopListening reads to find them.
 		stream = opened;
+		// Awaiting here is safe in a way that awaiting ahead of getUserMedia would not
+		// be. iOS spends the tap's activation on whichever await runs first, which is
+		// why everything above stays synchronous, but nothing past the prompt needs
+		// the gesture any more.
+		await loadLevelListeningModule();
+		// The same identity check the fade above makes, for the same reason. A
+		// listener who stopped inside the fetch has already had their tracks released,
+		// and the nodes below would then be reading a dead stream with nothing left to
+		// take them down: stopListening cleared its references before either node
+		// existed.
+		if (stream !== opened) {
+			return;
+		}
+		const context = Tone.getContext();
+		const input = context.createMediaStreamSource(opened);
+		const listening = context.createAudioWorkletNode(LEVEL_LISTENING_PROCESSOR);
+		input.connect(listening);
+		// The worklet's output is silent, so this connection costs nothing audible. It
+		// is still not optional. Web Audio pulls the graph backwards from the
+		// destination, and a node the master bus cannot reach is never processed, so
+		// an unconnected worklet posts nothing at all.
+		Tone.connect(listening, ensureOutput().master);
+		listening.port.onmessage = (event: MessageEvent<SignalMessage>): void => {
+			const { name, value } = event.data;
+			lastSignalValues.set(name, value);
+			for (const listener of signalListeners) {
+				listener(name, value);
+			}
+		};
+		listeningInput = input;
+		levelListening = listening;
 	}
 
 	function stopListening(): void {
@@ -341,6 +430,23 @@ export function createToneBackend(): ToneBackend {
 		//
 		// A track outlives the stream object, so releasing the reference alone leaves
 		// the recording indicator lit. Principle I makes that non-negotiable.
+		//
+		// The graph comes down before the tracks do, and the message handler goes with
+		// it. A source node whose tracks have stopped still outputs silence, and a
+		// worklet the master bus is pulling would go on reading that silence and go on
+		// posting it, sliding every parameter a Control Signal drives down to what an
+		// empty room looks like.
+		//
+		// The signals are left wherever they last read. Ramping them back to their
+		// declared defaults when input suspends is a Scene's job under ADR 0004, not
+		// this seam's.
+		listeningInput?.disconnect();
+		if (levelListening !== undefined) {
+			levelListening.port.onmessage = null;
+			levelListening.disconnect();
+		}
+		listeningInput = undefined;
+		levelListening = undefined;
 		for (const track of stream?.getTracks() ?? []) {
 			track.stop();
 		}

@@ -14,6 +14,10 @@ export function readLevel(): number {
 	return window.__fieldtone?.readOutputLevel() ?? 0;
 }
 
+export function readSignal(name: string): number {
+	return window.__fieldtone?.readSignal(name) ?? 0;
+}
+
 export function renderBedRms(): Promise<number> {
 	return window.__fieldtone?.renderBedRms() ?? Promise.resolve(0);
 }
