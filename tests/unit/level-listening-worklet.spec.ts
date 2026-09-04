@@ -12,11 +12,13 @@ import {
 	smooth,
 	SMOOTHING_ATTACK_SECONDS,
 	SMOOTHING_RELEASE_SECONDS,
-} from '../../public/worklets/level-listening.js';
+} from '../../public/worklets/level-listening-maths.js';
 
-// Importing the worklet is itself one of the assertions. jsdom has no
-// AudioWorkletProcessor and no registerProcessor, so a module that reached for
-// either at load would throw here before a single case ran.
+// The maths sits in its own module so it can be imported here at all. The
+// processor beside it may not carry an `export`, because standardized-audio-context
+// re-wraps a worklet's source in an arrow function before loading it and a
+// top-level export inside that body is a syntax error. Nothing in this file
+// reaches AudioWorkletProcessor or registerProcessor, neither of which jsdom has.
 
 // The render quantum every Web Audio implementation uses, at the rate the
 // browsers this ships to report. The hold-off and both one-pole coefficients are
