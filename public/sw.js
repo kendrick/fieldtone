@@ -14,6 +14,12 @@ const CHUNKS = /(?:src|href)="([^"]*_next\/static\/[^"]*)"/g;
 // Shared by install and by every navigation that reaches the network. That sharing
 // is what moves a returning visitor onto a build published since their last visit
 // instead of stranding them on the one they first installed.
+// Two controlled tabs can hold navigations at once, and a deploy landing between
+// them let the older call resume against a `held` snapshot the newer one had
+// already invalidated: it skipped re-adding the chunks the newer call deleted, then
+// put its older HTML back over the newer. Serializing removes the interleaving.
+let revisions = Promise.resolve();
+
 async function reviseShell(response) {
 	// Throwing rather than returning is what fails an install that could not reach
 	// the shell. A fulfilled install would skipWaiting and activate against an empty
@@ -21,6 +27,14 @@ async function reviseShell(response) {
 	// outgoing worker left behind. The navigation path swallows this instead.
 	if (!response.ok)
 		throw new Error('shell unavailable');
+	const revision = revisions.then(() => applyRevision(response));
+	// The chain absorbs a failure so one bad refresh cannot wedge every later one,
+	// while this caller still sees its own revision's rejection.
+	revisions = revision.catch(() => {});
+	return revision;
+}
+
+async function applyRevision(response) {
 	const cache = await caches.open(CACHE);
 	// Clone before text() drains the body. This copy is what gets cached below.
 	const shell = response.clone();
