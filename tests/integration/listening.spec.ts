@@ -8,6 +8,15 @@ import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, readSignal, renderBedRms }
 // waiting it out for real.
 const OFFERED_KEY = 'fieldtone.invitation.listen';
 
+// Test-only, installed by the worklet-failure case below. It lives here rather
+// than on the probe because production has no reason to hand out a microphone
+// track, and the probe is the app's surface rather than the suite's.
+declare global {
+	interface Window {
+		__grantedTracks?: MediaStreamTrack[];
+	}
+}
+
 // Both flags, not just the device one. The fake device alone leaves headless
 // Chromium throwing NotSupportedError from getUserMedia, which this app maps to
 // `unavailable` — so a suite missing the second flag tests the try-another-browser
@@ -107,5 +116,48 @@ test.describe('listen invitation', () => {
 		// its RMS tracks the signal. Ember redraws its voicing per render, so
 		// the two numbers have no reason to agree from one call to the next.
 		expect(await page.evaluate(renderBedRms)).toBeGreaterThan(AUDIBLE_THRESHOLD);
+	});
+
+	test('hands the microphone back when the worklet module never arrives', async ({ page }): Promise<void> => {
+		await page.addInitScript((key: string) => {
+			window.localStorage.setItem(key, 'offered');
+		}, OFFERED_KEY);
+
+		// Every track getUserMedia hands out, kept where the assertion can reach it.
+		// The backend holds the stream in a closure and the probe deliberately does
+		// not expose it, so a page has no other way to ask whether the microphone
+		// was actually released rather than merely reported as failed.
+		await page.addInitScript(() => {
+			const granted: MediaStreamTrack[] = [];
+			window.__grantedTracks = granted;
+			const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+			navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
+				const stream = await open(constraints);
+				granted.push(...stream.getTracks());
+				return stream;
+			};
+		});
+
+		// A deploy that shipped the page without the worklet, or a network that drops
+		// the request. Either way the grant has already happened by the time the load
+		// fails, which is the case Principle I turns on.
+		await page.route('**/worklets/level-listening.js', route => route.abort());
+		await page.goto('./');
+
+		await page.getByRole('button', { name: 'Play' }).click();
+		await page.getByRole('button', { name: 'Let it listen' }).click();
+
+		await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
+			'This browser cannot open a microphone.',
+		);
+
+		// The message is the easy half. Nothing captured may outlive the session that
+		// captured it, so a failure after the grant still has to stop the track. Left
+		// running it lights the recording indicator underneath a message saying the
+		// microphone never opened, and no later press releases it: the runtime reaches
+		// `refused`, where its own stopListening guard returns before the backend.
+		await expect
+			.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
+			.toBe(true);
 	});
 });

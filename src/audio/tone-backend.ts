@@ -393,33 +393,56 @@ export function createToneBackend(): ToneBackend {
 		// be. iOS spends the tap's activation on whichever await runs first, which is
 		// why everything above stays synchronous, but nothing past the prompt needs
 		// the gesture any more.
-		await loadLevelListeningModule();
-		// The same identity check the fade above makes, for the same reason. A
-		// listener who stopped inside the fetch has already had their tracks released,
-		// and the nodes below would then be reading a dead stream with nothing left to
-		// take them down: stopListening cleared its references before either node
-		// existed.
-		if (stream !== opened) {
-			return;
-		}
-		const context = Tone.getContext();
-		const input = context.createMediaStreamSource(opened);
-		const listening = context.createAudioWorkletNode(LEVEL_LISTENING_PROCESSOR);
-		input.connect(listening);
-		// The worklet's output is silent, so this connection costs nothing audible. It
-		// is still not optional. Web Audio pulls the graph backwards from the
-		// destination, and a node the master bus cannot reach is never processed, so
-		// an unconnected worklet posts nothing at all.
-		Tone.connect(listening, ensureOutput().master);
-		listening.port.onmessage = (event: MessageEvent<SignalMessage>): void => {
-			const { name, value } = event.data;
-			lastSignalValues.set(name, value);
-			for (const listener of signalListeners) {
-				listener(name, value);
+		// Everything past the grant runs inside the catch, because the microphone is
+		// already open by the time any of it can fail. A module that 404s or a fetch
+		// that drops leaves a live track and a lit recording indicator underneath a
+		// message saying the microphone never opened, and nothing later takes it back:
+		// the runtime lands in `refused`, where its own stopListening returns on the
+		// status guard before it reaches this seam. Principle I is non-negotiable, so
+		// the failing path hands the microphone back itself.
+		try {
+			await loadLevelListeningModule();
+			// The same identity check the fade above makes, for the same reason. A
+			// listener who stopped inside the fetch has already had their tracks released,
+			// and the nodes below would then be reading a dead stream with nothing left to
+			// take them down: stopListening cleared its references before either node
+			// existed.
+			if (stream !== opened) {
+				return;
 			}
-		};
-		listeningInput = input;
-		levelListening = listening;
+			const context = Tone.getContext();
+			const input = context.createMediaStreamSource(opened);
+			const listening = context.createAudioWorkletNode(LEVEL_LISTENING_PROCESSOR);
+			input.connect(listening);
+			// The worklet's output is silent, so this connection costs nothing audible. It
+			// is still not optional. Web Audio pulls the graph backwards from the
+			// destination, and a node the master bus cannot reach is never processed, so
+			// an unconnected worklet posts nothing at all.
+			Tone.connect(listening, ensureOutput().master);
+			listening.port.onmessage = (event: MessageEvent<SignalMessage>): void => {
+				const { name, value } = event.data;
+				lastSignalValues.set(name, value);
+				for (const listener of signalListeners) {
+					listener(name, value);
+				}
+			};
+			listeningInput = input;
+			levelListening = listening;
+		}
+		catch (error) {
+			// Only when this attempt still owns the microphone. A stop, or a stop and a
+			// second press, already released `opened` and moved `stream` on, and stopping
+			// again here would take down a session that succeeded.
+			if (stream === opened) {
+				stopListening();
+			}
+			// `unavailable` because nothing here is the listener's answer: they granted
+			// the microphone and the app could not use it. Rejecting with the seam's own
+			// error rather than letting this escape raw also makes audio-backend.ts's
+			// promise of a ListeningRejection and nothing else true, where before the
+			// runtime's catch-all was quietly covering for it.
+			throw new ListeningRejection('unavailable', { cause: error });
+		}
 	}
 
 	function stopListening(): void {
