@@ -1,8 +1,8 @@
 // Pure and Tone-free on purpose, the same way voicing.ts is: a parameter
-// declaration is just a label and three numbers, so the whole schema can be
-// resolved and asserted on with no AudioContext anywhere near it. The Scene
-// that owns the parameter is the only thing that knows what to do with the
-// resolved number.
+// declaration is just a label, three numbers and an optional step, so the
+// whole schema can be resolved and asserted on with no AudioContext anywhere
+// near it. The Scene that owns the parameter is the only thing that knows
+// what to do with the resolved number.
 
 export interface NumberParameter {
 	readonly kind: 'number';
@@ -10,6 +10,9 @@ export interface NumberParameter {
 	readonly min: number;
 	readonly max: number;
 	readonly default: number;
+	// Optional because only a rendered slider needs a step, and the inline
+	// schema fixtures across the specs never render one.
+	readonly step?: number;
 }
 
 // A union of one today. The `switch (declaration.kind)` in
@@ -59,4 +62,51 @@ export function resolveParameterValue(declaration: ParameterDeclaration, value: 
 	}
 
 	return clampParameterValue(declaration, value);
+}
+
+// 0.01 divides both of Ember's ranges into whole steps and leaves each of
+// them 80 positions or more. #36 measured the alternatives: a hundredth of
+// the range divides neither Ember default evenly, and `step="any"` displays
+// the right number but moves a Firefox arrow key a full 1.0 across
+// Brightness's 2.25-wide range.
+const DEFAULT_STEP = 0.01;
+
+// Wide enough to absorb float noise. Ember's own four divisions all come out
+// exactly integer, but the division is not reliable in general: a parameter
+// declaring a default of 0.29 on a 0.01 grid divides to 28.999999999999996,
+// which an equality check would reject for a schema that is correct. Browsers
+// do their own form arithmetic in decimal and never see this, so the tolerance
+// covers this check alone. It stays far narrower than the smallest miss that
+// matters, which is half a step.
+const GRID_TOLERANCE = 1e-6;
+
+// A range input snaps its value to `min + n * step`, so a step that misses a
+// bound leaves the widget showing a number the Scene is not playing: 0.352 on
+// a Space set to 0.35 (#36). Nothing else tests whether a step divides its
+// range evenly, so this function does. A Scene that declares a bound off its
+// own grid then fails the moment something reads its schema, rather than at a
+// listener's slider.
+//
+// `max` earns the same check as `default`: it is where End lands, and it can
+// miss the grid while the default sits right on it.
+export function resolveStep(declaration: NumberParameter): number {
+	const step = declaration.step ?? DEFAULT_STEP;
+
+	assertOnStepGrid(declaration, 'default', declaration.default, step);
+	assertOnStepGrid(declaration, 'max', declaration.max, step);
+
+	return step;
+}
+
+// RangeError rather than a plain Error, because Tone already throws a
+// RangeError for a value outside what a parameter can hold. A bound off the
+// grid is the same mistake, caught before any audio node sees it.
+function assertOnStepGrid(declaration: NumberParameter, bound: 'default' | 'max', value: number, step: number): void {
+	const steps = (value - declaration.min) / step;
+
+	if (Math.abs(steps - Math.round(steps)) > GRID_TOLERANCE) {
+		throw new RangeError(
+			`${declaration.label} declares a ${bound} of ${value}, which is not a whole number of ${step} steps above its min of ${declaration.min}.`,
+		);
+	}
 }
