@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, renderBedRms } from './probe';
+import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, readLevel } from './probe';
 
 // See listening.spec.ts for what this flag pre-sets and why.
 const OFFERED_KEY = 'fieldtone.invitation.listen';
@@ -49,9 +49,18 @@ test.describe('audio session denied', () => {
 		// settled.
 		await expect.poll(() => page.evaluate(() => navigator.audioSession?.type)).toBe('playback');
 
-		// Rendered offline so this needs no sound card, and it drives the same
-		// graph playback uses, so a Bed left silenced by the refusal would show
-		// up here exactly as it does in listening-refused.spec.ts.
-		expect(await page.evaluate(renderBedRms)).toBeGreaterThan(AUDIBLE_THRESHOLD);
+		// The live envelope, not an offline render. `renderBedRms` builds a fresh
+		// voice in an OfflineAudioContext and fades it in unconditionally, so it
+		// answers "this Scene still makes a sound" and cannot see where the playing
+		// Bed's gain actually sits: delete the return scheduled above and it stays
+		// green. Measured, not argued — that mutation was run, and only this poll
+		// caught it. AC 3 is a claim about the level the listener is left at, so the
+		// meter is the only probe that speaks to it.
+		//
+		// This is the one assertion here that rides the realtime clock, which the
+		// `isRealtimeAudioAvailable` guard above already covers: a machine with no
+		// audio device skips rather than reading a meter frozen at zero. Same shape
+		// as audible-output.spec.ts, which polls this probe behind the same guard.
+		await expect.poll(() => page.evaluate(readLevel), { timeout: 5_000 }).toBeGreaterThan(AUDIBLE_THRESHOLD);
 	});
 });
