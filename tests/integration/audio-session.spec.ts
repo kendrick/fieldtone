@@ -88,12 +88,20 @@ test.describe('audio session', () => {
 		await acceptButton.click();
 		await stopButton.click();
 
-		// Stopping playback drops `offered` to false regardless of which side of
-		// the fade the click landed on, which is what makes this half of the
-		// assertion deterministic even though the type below is not: the runtime's
-		// own orphan recheck unmounts the floor whether or not the backend's
-		// session switch had already completed.
+		// Stopping playback drops `offered` to false regardless of which side of the
+		// fade the click landed on: the runtime's own orphan recheck unmounts the
+		// floor whether or not the backend's session switch had already completed.
 		await expect(page.locator('.invitation-floor')).toBeHidden();
+		// Then read the type only after the fade window has passed, never at the
+		// moment Stop lands. The early return this case exists to hold down is what
+		// keeps `requestRecordSession()` unreachable; delete it and the backend still
+		// reaches the switch, just not until the 0.3s audio-clock fade resolves. A
+		// single read here, and an `expect.poll` that settles on its first matching
+		// sample, both see `playback` before that and pass against a backend carrying
+		// no AC 9 protection at all. Measured against the mutation, not reasoned:
+		// with the early return gone the type reads `playback`, then turns
+		// `play-and-record` about 300ms later and stays there.
+		await page.waitForTimeout(1_000);
 		expect(await page.evaluate(() => navigator.audioSession?.type)).toBe('playback');
 	});
 
