@@ -1,6 +1,6 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { AUDIBLE_THRESHOLD, renderBedRms } from './probe';
+import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, readSignal, renderBedRms } from './probe';
 
 // The localStorage flag listen-invitation.tsx writes once the floor's
 // animation ends. Pre-setting it here is what a returning listener's browser
@@ -79,5 +79,33 @@ test.describe('listen invitation', () => {
 
 		const results = await new AxeBuilder({ page }).analyze();
 		expect(results.violations).toEqual([]);
+	});
+
+	test('the worklet feeds a real loudness signal while the Bed keeps playing', async ({ page }): Promise<void> => {
+		await page.addInitScript((key: string) => {
+			window.localStorage.setItem(key, 'offered');
+		}, OFFERED_KEY);
+		await page.goto('./');
+
+		await page.getByRole('button', { name: 'Play' }).click();
+		await page.getByRole('button', { name: 'Let it listen' }).click();
+
+		await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText('Listening');
+
+		// A frozen audio clock (headless CI with no sound card) never runs the
+		// worklet's process() at all, so the signal would sit at 0 forever. That
+		// is the environment failing rather than the worklet, and it has to skip
+		// rather than hang the poll below or fail on a false negative.
+		test.skip(!(await page.evaluate(isRealtimeAudioAvailable)), 'no realtime audio clock available');
+
+		// Chromium's fake capture device emits a beeping tone, which is the
+		// sound the worklet's blockRms/loudnessFromRms chain is measuring here.
+		await expect.poll(() => page.evaluate(readSignal, 'loudness')).toBeGreaterThan(0);
+
+		// Rendered offline, same as the grant case above: proves the Bed is
+		// still audible with the worklet node wired into the graph, not that
+		// its RMS tracks the signal. Ember redraws its voicing per render, so
+		// the two numbers have no reason to agree from one call to the next.
+		expect(await page.evaluate(renderBedRms)).toBeGreaterThan(AUDIBLE_THRESHOLD);
 	});
 });
