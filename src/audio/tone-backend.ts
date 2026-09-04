@@ -314,8 +314,20 @@ export function createToneBackend(): ToneBackend {
 	// `document.baseURI` is this page and the worklet resolves under whatever base
 	// the export is served from.
 	function loadLevelListeningModule(): Promise<void> {
+		// Forced to a directory before resolving against it. `next dev` serves this
+		// route as `/fieldtone` and the static export serves it as `/fieldtone/`, and
+		// a relative specifier resolved against the slashless form replaces the last
+		// segment rather than extending it: the worklet is then looked for at
+		// `/worklets/...`, outside the basePath, and 404s. That failure reaches the
+		// listener as "This browser cannot open a microphone", which names the wrong
+		// thing entirely.
+		//
+		// Appending the slash is safe only because the app has exactly one route and
+		// it is the basePath root, so the page URL is the directory. A second route
+		// would need the prefix from somewhere that knows it rather than from here.
+		const base = document.baseURI.endsWith('/') ? document.baseURI : `${document.baseURI}/`;
 		levelListeningModule ??= Tone.getContext().rawContext.audioWorklet.addModule(
-			new URL(LEVEL_LISTENING_MODULE, document.baseURI).href,
+			new URL(LEVEL_LISTENING_MODULE, base).href,
 		);
 		return levelListeningModule;
 	}
