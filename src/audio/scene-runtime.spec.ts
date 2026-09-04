@@ -790,8 +790,8 @@ describe('scene runtime listening', (): void => {
 	// The gap `opening` names is wide enough for the whole session to end inside
 	// it: a listener presses accept, leaves the browser's prompt sitting there,
 	// presses stop, and grants permission afterwards. The stop leaves through
-	// `opening` without waiting, so the grant is the last thing to arrive and it
-	// is the only place left to close the microphone.
+	// `opening` without waiting on the attempt, and closes the microphone on its
+	// way past rather than leaving it to the grant.
 	it('releases a microphone granted after stop was pressed mid-opening', async (): Promise<void> => {
 		const backend = createRecordingBackend();
 		const runtime = createSceneRuntime(backend, silentScene);
@@ -808,11 +808,16 @@ describe('scene runtime listening', (): void => {
 		expect(result).toEqual({ ok: false, reason: 'not-playing' });
 		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
 		expect(runtime.getState()).toEqual({ status: 'idle' });
-		// stopListening lands last because it cannot land any earlier: there was no
-		// microphone to close until the grant arrived. What matters is that it lands
-		// at all, and that the recording indicator goes out with it.
+		// Two stopListening calls, and each one closes a different hole. The first is
+		// Stop reaching a microphone the backend has held since the grant landed,
+		// which it could not do while `stream` was assigned on the last line of
+		// startListening; #27 put an awaited module fetch after that point, and a
+		// fetch that never settles would otherwise hold the track for the life of
+		// the page. The second is this attempt finding the session gone on its way
+		// out, which is what still releases a grant arriving later than the stop.
 		expect(backend.commands.slice(3)).toEqual([
 			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
 			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
 			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
 			{ kind: 'stopListening' },
@@ -836,10 +841,11 @@ describe('scene runtime listening', (): void => {
 		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
 	});
 
-	// The same race with the opposite answer. Nothing needs closing here, but the
-	// Invitation must not surface a refusal either: the listener stopped the app,
-	// and a message about the microphone on a stopped Bed answers a question they
-	// stopped asking.
+	// The same race with the opposite answer. Stop still closes on its way past,
+	// because it cannot know yet which answer is coming, and the Invitation must
+	// not surface a refusal either: the listener stopped the app, and a message
+	// about the microphone on a stopped Bed answers a question they stopped
+	// asking.
 	it('records no refusal when the browser says no after stop was pressed mid-opening', async (): Promise<void> => {
 		const backend = createRecordingBackend({ listening: 'refused' });
 		const runtime = createSceneRuntime(backend, silentScene);
@@ -855,6 +861,7 @@ describe('scene runtime listening', (): void => {
 		expect(runtime.getState()).toEqual({ status: 'idle' });
 		expect(backend.commands.slice(3)).toEqual([
 			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
 			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
 			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
 			{ kind: 'stopListening' },
@@ -893,6 +900,45 @@ describe('scene runtime listening', (): void => {
 		expect(runtime.getState()).toEqual({ status: 'playing' });
 		// The microphone the browser just handed over is closed rather than left
 		// live behind a session that never asked for it.
+		expect(backend.commands.at(-1)).toEqual({ kind: 'stopListening' });
+	});
+
+	// Stop listening, rather than Stop. The Bed plays throughout, so neither orphan
+	// check fires and the attempt is left to finish normally, which is exactly the
+	// case that used to swallow the press: `stopListening` turned itself away on
+	// the status guard, the grant then completed into `listening`, and a listener
+	// who asked for the microphone back watched it open instead.
+	//
+	// Since #27 the wait after the grant is a module fetch, and a fetch that never
+	// settles never reaches the recheck, so waiting for the attempt is not an
+	// option Principle I leaves open.
+	it('closes a microphone the listener stops asking for while the grant is still out', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		let grantMicrophone: () => void = (): void => {};
+		const prompt = new Promise<void>((resolve): void => {
+			grantMicrophone = resolve;
+		});
+		const runtime = createSceneRuntime({ ...backend, startListening: (): Promise<void> => prompt }, silentScene);
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		const stopResult = runtime.stopListening();
+
+		// Answered before the grant lands, which is the point: nothing here waits on
+		// the browser, and the Bed is still playing while it happens.
+		expect(stopResult).toEqual({ ok: true });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+		expect(backend.commands.at(-1)).toEqual({ kind: 'stopListening' });
+
+		grantMicrophone();
+
+		// The grant still arrives, and is still turned away. `stopped-listening`
+		// rather than an orphan reason, because the session it belonged to never
+		// ended: only the listener's interest in the microphone did.
+		expect(await accepting).toEqual({ ok: false, reason: 'stopped-listening' });
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'playing' });
 		expect(backend.commands.at(-1)).toEqual({ kind: 'stopListening' });
 	});
 });

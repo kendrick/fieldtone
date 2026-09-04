@@ -178,6 +178,13 @@ export function createToneBackend(): ToneBackend {
 	let levelListening: AudioWorkletNode | undefined;
 	// The worklet module load, remembered so a stop-then-listen refetches nothing.
 	let levelListeningModule: Promise<void> | undefined;
+	// Bumped by every stopListening, so an attempt that is still out can tell
+	// whether the session it belongs to has since ended. `stream` cannot answer
+	// that: it reads undefined both before a grant arrives and after a stop, and
+	// the two need opposite handling. A grant landing after a stop must be closed
+	// where it lands, because the module await below it may never settle and the
+	// runtime's own recheck sits on the far side of that await.
+	let listeningEpoch = 0;
 
 	function readOutputLevel(): number {
 		if (output === undefined) {
@@ -314,6 +321,8 @@ export function createToneBackend(): ToneBackend {
 	}
 
 	async function startListening(): Promise<void> {
+		// Read before anything is awaited, compared once the microphone is in hand.
+		const epoch = listeningEpoch;
 		// The absent-API case never reaches getUserMedia, so nothing maps it for us.
 		// It is `unavailable` for the same reason an unrecognized DOMException name
 		// is: try another browser, not try again.
@@ -384,6 +393,16 @@ export function createToneBackend(): ToneBackend {
 			if (faded !== undefined && voice === faded) {
 				fadeVoiceIn(faded, SESSION_FADE_SECONDS);
 			}
+		}
+		// A stop landed while the prompt was still up. Closing the track here rather
+		// than holding it, because everything below waits on a module fetch that may
+		// never come back, and a microphone opened for a session that already ended
+		// may not sit behind that wait. Principle I is non-negotiable.
+		if (epoch !== listeningEpoch) {
+			for (const track of opened.getTracks()) {
+				track.stop();
+			}
+			return;
 		}
 		// Held before the module load rather than after it. A Stop landing inside that
 		// await still has to find tracks to stop, and `stream` is the only thing
@@ -463,6 +482,9 @@ export function createToneBackend(): ToneBackend {
 		// The signals are left wherever they last read. Ramping them back to their
 		// declared defaults when input suspends is a Scene's job under ADR 0004, not
 		// this seam's.
+		// Ahead of the teardown, so an attempt still waiting on the prompt or on the
+		// module fetch sees the bump whichever side of it wakes up first.
+		listeningEpoch += 1;
 		listeningInput?.disconnect();
 		if (levelListening !== undefined) {
 			levelListening.port.onmessage = null;

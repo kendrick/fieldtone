@@ -160,4 +160,37 @@ test.describe('listen invitation', () => {
 			.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
 			.toBe(true);
 	});
+
+	// The stalled twin of the case above. A request that hangs rather than fails
+	// never reaches the catch in tone-backend.ts, so the microphone is released
+	// here by Stop reaching the backend during `opening` instead.
+	test('hands the microphone back when the module load never settles', async ({ page }): Promise<void> => {
+		await page.addInitScript((key: string) => {
+			window.localStorage.setItem(key, 'offered');
+		}, OFFERED_KEY);
+		await page.addInitScript(() => {
+			const granted: MediaStreamTrack[] = [];
+			window.__grantedTracks = granted;
+			const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+			navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
+				const stream = await open(constraints);
+				granted.push(...stream.getTracks());
+				return stream;
+			};
+		});
+		// Never fulfilled, never aborted. The request simply hangs.
+		await page.route('**/worklets/level-listening.js', () => {});
+		await page.goto('./');
+
+		await page.getByRole('button', { name: 'Play' }).click();
+		await page.getByRole('button', { name: 'Let it listen' }).click();
+		await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
+			'Asking your browser for the microphone.',
+		);
+		await page.getByRole('button', { name: 'Stop' }).click();
+
+		await expect
+			.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
+			.toBe(true);
+	});
 });
