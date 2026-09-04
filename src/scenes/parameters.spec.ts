@@ -100,6 +100,29 @@ describe('resolveStep', (): void => {
 		expect(resolveStep({ kind: 'number', label: 'Space', min: 0, max: 0.8, step: 0.01, default: 0.35 })).toBe(0.01);
 	});
 
+	// A range input refuses a step that is not positive and falls back to its own
+	// default of 1, which on a range narrower than 1 leaves a single reachable
+	// value: measured in Chromium, Firefox and WebKit, the thumb pins to 0 and no
+	// arrow key moves it. The grid check below cannot catch these on its own,
+	// because dividing by them yields NaN and every comparison against NaN is
+	// false.
+	it.each([
+		['zero', 0],
+		['negative', -0.01],
+		['NaN', Number.NaN],
+		['infinite', Number.POSITIVE_INFINITY],
+	])('rejects a %s step rather than passing it to the control', (_name: string, step: number): void => {
+		expect((): number =>
+			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 0.8, step, default: 0.35 }),
+		).toThrow(RangeError);
+	});
+
+	it('names the parameter whose step is invalid', (): void => {
+		expect((): number =>
+			resolveStep({ kind: 'number', label: 'Brightness', min: 0, max: 1, step: 0, default: 0 }),
+		).toThrow(/Brightness/);
+	});
+
 	it('rejects a default that does not land on the grid', (): void => {
 		expect((): number =>
 			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 1, step: 0.05, default: 0.023 }),

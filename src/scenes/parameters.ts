@@ -92,6 +92,22 @@ const GRID_TOLERANCE = 1e-6;
 export function resolveStep(declaration: NumberParameter): number {
 	const step = declaration.step ?? DEFAULT_STEP;
 
+	// Ahead of the grid check, because that check divides by `step` and compares
+	// what comes back. A zero step makes 0/0, a non-finite one makes Infinity minus
+	// Infinity, and every comparison against NaN is false, so an invalid step would
+	// pass straight through the function written to reject it. clampParameterValue
+	// above guards its own arithmetic the same way and for the same reason.
+	//
+	// Worth rejecting rather than falling back to DEFAULT_STEP: a range input
+	// refuses a step that is not positive and uses its own default of 1, which on
+	// Space's 0 to 0.8 range leaves one reachable value. Measured in all three
+	// engines, the thumb pins to 0 and no arrow key moves it.
+	if (!Number.isFinite(step) || step <= 0) {
+		throw new RangeError(
+			`${declaration.label} declares a step of ${step}, which has to be a finite number greater than zero.`,
+		);
+	}
+
 	assertOnStepGrid(declaration, 'default', declaration.default, step);
 	assertOnStepGrid(declaration, 'max', declaration.max, step);
 
