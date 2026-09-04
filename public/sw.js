@@ -18,16 +18,22 @@ async function reviseShell(response) {
 	if (!response.ok)
 		return;
 	const cache = await caches.open(CACHE);
-	// put() rather than addAll() so the key is the bare scope URL. A shared link
-	// carries a query string, and offline that navigation has to find this entry.
-	await cache.put(SHELL, response.clone());
+	// Clone before text() drains the body. This copy is what gets cached below.
+	const shell = response.clone();
 	const html = await response.text();
 	const wanted = new Set([...html.matchAll(CHUNKS)].map((match) => new URL(match[1], SHELL).href));
 	const held = await cache.keys();
+	// Add first, replace second, delete last. addAll rejects atomically on one bad
+	// response, so deleting ahead of it would strand a returning visitor with fresh
+	// HTML and no chunks, and a single flaky refresh would cost them the offline app
+	// they already had. In this order a rejection leaves the previous build whole.
+	await cache.addAll([...wanted].filter((url) => !held.some((request) => request.url === url)));
+	// put() rather than addAll() so the key is the bare scope URL. A shared link
+	// carries a query string, and offline that navigation has to find this entry.
+	await cache.put(SHELL, shell);
 	await Promise.all(held
 		.filter((request) => request.url.includes('_next/static/') && !wanted.has(request.url))
 		.map((request) => cache.delete(request)));
-	await cache.addAll([...wanted].filter((url) => !held.some((request) => request.url === url)));
 }
 
 async function cacheFirst(request) {
@@ -53,8 +59,13 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
 	event.waitUntil((async () => {
+		// CacheStorage partitions by origin and not by scope, so caches.keys() hands
+		// back the caches of every other project site sharing kendrick.github.io.
+		// Only names carrying this app's own prefix are ours to delete.
 		const names = await caches.keys();
-		await Promise.all(names.filter((name) => name !== CACHE).map((name) => caches.delete(name)));
+		await Promise.all(names
+			.filter((name) => name.startsWith('fieldtone-') && name !== CACHE)
+			.map((name) => caches.delete(name)));
 		// Claiming makes the first visit a controlled one, so the app works offline
 		// without a second load, and so a test can wait on the controller appearing
 		// rather than on a reload.
