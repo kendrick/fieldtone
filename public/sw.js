@@ -58,12 +58,22 @@ async function cacheFirst(request) {
 	const hit = await caches.match(request);
 	if (hit)
 		return hit;
-	const response = await fetch(request);
-	if (response.ok) {
-		const cache = await caches.open(CACHE);
-		await cache.put(request, response.clone());
+	// A miss with no network is an ordinary offline outcome here, because the install
+	// derive deliberately leaves the manifest and the icons out of the shell and the
+	// browser still asks for them. Letting the rejection escape would hand respondWith
+	// a rejected promise, which Chrome reports as an unhandled rejection per request
+	// and which buries every other console message. An error response says the same
+	// thing to the caller without the noise.
+	try {
+		const response = await fetch(request);
+		if (response.ok) {
+			const cache = await caches.open(CACHE);
+			await cache.put(request, response.clone());
+		}
+		return response;
+	} catch {
+		return Response.error();
 	}
-	return response;
 }
 
 self.addEventListener('install', (event) => {
