@@ -187,6 +187,48 @@ test.describe('shared link', () => {
 		expect(movedParams.has('brightness')).toBe(true);
 	});
 
+	// A link generated before #36 changed the step grid can carry a value that
+	// grid no longer holds: 0.352 is a whole number of the old 0.008 steps and is
+	// not one of 0.01's. The range input snaps its own display to 0.35, and
+	// nothing else moves—the store, the audio graph and any link this page emits
+	// all keep 0.352. That split is deliberate. #36's non-goals rule out
+	// "changing what the store, the audio graph, or a serialized link holds", so
+	// quantizing a deserialized value to the grid would break the promise a
+	// shared link makes rather than fix the widget. This case is what fails if
+	// someone tries it.
+	test('a link carrying a value off the step grid keeps that value in the link it produces', async ({ page }): Promise<void> => {
+		await page.addInitScript(() => {
+			Object.defineProperty(window.navigator, 'share', { configurable: true, value: undefined });
+
+			Object.defineProperty(window.navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: (text: string): Promise<void> => {
+						window.__sharedLink = text;
+						return Promise.resolve();
+					},
+				},
+			});
+		});
+
+		await page.goto('./?space=0.352');
+
+		// The widget snaps to the grid it declares, which is the one thing that does.
+		await expect(page.getByRole('slider', { name: 'Space' })).toHaveJSProperty('valueAsNumber', 0.35);
+
+		await page.getByRole('button', { name: 'Share this Scene' }).click();
+		await expect(page.getByRole('status')).toHaveText('Link copied');
+
+		const link = await page.evaluate(() => window.__sharedLink);
+		if (link === undefined) {
+			throw new Error('writeText was never called');
+		}
+
+		// String(value) is the codec's format and it does not round, so an exact
+		// string match is what proves nothing quantized on the way through.
+		expect(new URL(link).searchParams.get('space')).toBe('0.352');
+	});
+
 	test('the native share sheet receives one call carrying every parameter', async ({ page }): Promise<void> => {
 		// Defined rather than left to the platform, so every project exercises
 		// the share branch deterministically instead of whichever branch the
