@@ -2,13 +2,9 @@ import { expect, test } from '@playwright/test';
 import { AUDIBLE_THRESHOLD, renderBedRms } from './probe';
 
 // A range input snaps `valueAsNumber` to its own step grid while the store and
-// the audio keep the exact value, so only a value sitting on that grid can be
-// asserted without tolerance. The step is (max - min) / 100, which puts every
-// schema bound on the grid by construction—Space's 0.8 and Brightness's 0.75
-// and 3 are all exact, while Space's 0.35 default displays as 0.352. Anything
-// off a bound needs at least one step of slack: Space's step is 0.008 and
-// Brightness's is 0.0225.
-const SPACE_DEFAULT = 0.35;
+// the audio keep the exact value. Ember's step is 0.01 (see parameters.ts),
+// which divides both ranges evenly, so every value asserted here—bound or
+// default—lands on the grid exactly and needs no tolerance.
 
 declare global {
 	interface Window {
@@ -75,10 +71,10 @@ test.describe('shared link', () => {
 		// would pass even if the effect never ran.
 		await expect(page.getByRole('slider', { name: 'Brightness' })).toHaveJSProperty('valueAsNumber', 3);
 
-		// Polled rather than read once, for the same hydration race as above, and
-		// closeTo rather than exact because 0.35 is not on the step grid.
+		// Web-first rather than a one-shot read, for the same hydration race as
+		// above.
 		const space = page.getByRole('slider', { name: 'Space' });
-		await expect.poll(() => space.evaluate((element: HTMLInputElement): number => element.valueAsNumber)).toBeCloseTo(SPACE_DEFAULT, 1);
+		await expect(space).toHaveJSProperty('valueAsNumber', 0.35);
 
 		// `bogus=1` is in the link to prove an undeclared key is ignored rather
 		// than throwing somewhere in the apply effect. If it did, the UI would be
@@ -163,7 +159,7 @@ test.describe('shared link', () => {
 		const brightness = page.getByRole('slider', { name: 'Brightness' });
 
 		// Both bounds, not two arbitrary points, so both land on the step grid
-		// exactly per the comment on SPACE_DEFAULT above and need no tolerance.
+		// exactly per the header comment above and need no tolerance.
 		await space.focus();
 		await space.press('End');
 		await brightness.focus();
