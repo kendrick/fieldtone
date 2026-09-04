@@ -15,8 +15,12 @@ const CHUNKS = /(?:src|href)="([^"]*_next\/static\/[^"]*)"/g;
 // is what moves a returning visitor onto a build published since their last visit
 // instead of stranding them on the one they first installed.
 async function reviseShell(response) {
+	// Throwing rather than returning is what fails an install that could not reach
+	// the shell. A fulfilled install would skipWaiting and activate against an empty
+	// cache, and the next cache-name bump would then delete the working cache the
+	// outgoing worker left behind. The navigation path swallows this instead.
 	if (!response.ok)
-		return;
+		throw new Error('shell unavailable');
 	const cache = await caches.open(CACHE);
 	// Clone before text() drains the body. This copy is what gets cached below.
 	const shell = response.clone();
@@ -86,6 +90,6 @@ self.addEventListener('fetch', (event) => {
 	// response rather than ahead of it, so a fresh set of chunks never delays the
 	// page that is about to ask for them.
 	const network = fetch(request);
-	event.waitUntil(network.then((response) => reviseShell(response.clone()), () => {}));
+	event.waitUntil(network.then((response) => reviseShell(response.clone())).catch(() => {}));
 	event.respondWith(network.catch(() => caches.match(SHELL)));
 });

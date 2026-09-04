@@ -7,6 +7,29 @@ function hasServiceWorkerController(): boolean {
 	return Boolean(navigator.serviceWorker.controller);
 }
 
+// Also handed to page.evaluate, and bound by the same rule. Reports how many
+// _next/static/ URLs the served document references and which of them no
+// FieldTone cache holds, so the caller can tell an empty answer apart from a
+// document that referenced nothing at all.
+async function shellCacheCoverage(): Promise<{ referenced: number; missing: string[] }> {
+	const referenced = new Set(
+		[...document.querySelectorAll('script[src], link[href]')]
+			.map(element => element.getAttribute('src') ?? element.getAttribute('href') ?? '')
+			.filter(value => value.includes('_next/static/'))
+			.map(value => new URL(value, document.baseURI).href),
+	);
+	const names = (await caches.keys()).filter(name => name.startsWith('fieldtone-'));
+	const stores = await Promise.all(names.map(name => caches.open(name)));
+	const missing: string[] = [];
+	for (const url of referenced) {
+		const hits = await Promise.all(stores.map(store => store.match(url)));
+		if (!hits.some(hit => hit !== undefined)) {
+			missing.push(url);
+		}
+	}
+	return { referenced: referenced.size, missing };
+}
+
 test.describe('offline shell', () => {
 	test('the shell and its Bed still work with the network cut', async ({ page, context, browserName }): Promise<void> => {
 		// clients.claim() in activate makes the very first load a controlled one,
@@ -25,6 +48,14 @@ test.describe('offline shell', () => {
 		await page.reload();
 
 		await expect(page.getByRole('heading', { level: 1, name: 'FieldTone' })).toBeVisible();
+
+		// Reloading offline is not on its own proof that CacheStorage is complete.
+		// Firefox will serve a fingerprinted chunk out of its own HTTP cache while
+		// the context is offline, so a worker that cached no chunk at all still gets
+		// through the reload there. Naming the misses reads the same on every engine.
+		const coverage = await page.evaluate(shellCacheCoverage);
+		expect(coverage.referenced).toBeGreaterThan(0);
+		expect(coverage.missing).toEqual([]);
 
 		// A shell that paints and makes no sound offline is the exact failure
 		// this spec exists to catch, so the heading alone doesn't finish the
