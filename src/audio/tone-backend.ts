@@ -5,6 +5,7 @@ import * as Tone from 'tone';
 import { ListeningRejection } from './audio-backend';
 import { needsRecordSession, requestPlaybackSession, requestRecordSession } from './audio-session';
 import { reasonForCaptureError } from './capture-rejection';
+import { workletModuleUrl } from './worklet-url';
 
 // Every Tone.js call in the app lives here: this is the one AudioBackend that
 // makes a sound, and the recording fake beside it is the one that does not. The
@@ -314,20 +315,12 @@ export function createToneBackend(): ToneBackend {
 	// `document.baseURI` is this page and the worklet resolves under whatever base
 	// the export is served from.
 	function loadLevelListeningModule(): Promise<void> {
-		// Forced to a directory before resolving against it. `next dev` serves this
-		// route as `/fieldtone` and the static export serves it as `/fieldtone/`, and
-		// a relative specifier resolved against the slashless form replaces the last
-		// segment rather than extending it: the worklet is then looked for at
-		// `/worklets/...`, outside the basePath, and 404s. That failure reaches the
-		// listener as "This browser cannot open a microphone", which names the wrong
-		// thing entirely.
-		//
-		// Appending the slash is safe only because the app has exactly one route and
-		// it is the basePath root, so the page URL is the directory. A second route
-		// would need the prefix from somewhere that knows it rather than from here.
-		const base = document.baseURI.endsWith('/') ? document.baseURI : `${document.baseURI}/`;
+		// worklet-url.ts owns the arithmetic and carries the reasoning. A 404 here
+		// rejects addModule, and the seam turns that into `unavailable`, so getting
+		// it wrong tells the listener their browser cannot open a microphone when
+		// the browser was never the problem.
 		levelListeningModule ??= Tone.getContext().rawContext.audioWorklet.addModule(
-			new URL(LEVEL_LISTENING_MODULE, base).href,
+			workletModuleUrl(document.baseURI, LEVEL_LISTENING_MODULE),
 		);
 		return levelListeningModule;
 	}
