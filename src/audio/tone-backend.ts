@@ -354,9 +354,17 @@ export function createToneBackend(): ToneBackend {
 		// rejects addModule, and the seam turns that into `unavailable`, so getting
 		// it wrong tells the listener their browser cannot open a microphone when
 		// the browser was never the problem.
-		levelListeningModule ??= Tone.getContext().rawContext.audioWorklet.addModule(
-			workletModuleUrl(document.baseURI, LEVEL_LISTENING_MODULE),
-		);
+		const url = workletModuleUrl(document.baseURI, LEVEL_LISTENING_MODULE);
+
+		// Cleared again on rejection, so the cache holds successes only. A dropped
+		// request would otherwise be remembered as a permanent verdict: every later
+		// press would reuse the rejected promise without touching the network. There
+		// is no button to retry with, because `unavailable` leaves none, but Stop and
+		// Play offer the Invitation again and that press has to be able to work.
+		levelListeningModule ??= Tone.getContext().rawContext.audioWorklet.addModule(url).catch((error: unknown) => {
+			levelListeningModule = undefined;
+			throw error;
+		});
 		return levelListeningModule;
 	}
 

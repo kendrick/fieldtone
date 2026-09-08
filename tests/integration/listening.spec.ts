@@ -259,5 +259,42 @@ test.describe('listen invitation', () => {
 				.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
 				.toBe(true);
 		});
+
+		// A dropped request is not a verdict about the browser. The backend caches the
+		// module promise so two presses never fetch twice, and caching a rejection
+		// alongside the successes would turn one bad fetch into a permanent one: every
+		// later press would reuse it without touching the network.
+		//
+		// Stop and Play are the retry. `unavailable` leaves no button of its own,
+		// because the Invitation reserves that for the two hardware reasons, but a
+		// fresh session offers "Let it listen" again.
+		test('recovers on a later press when the module load failed once', async ({ page }): Promise<void> => {
+			await page.addInitScript((key: string) => {
+				window.localStorage.setItem(key, 'offered');
+			}, OFFERED_KEY);
+
+			let failNext = true;
+			await page.route('**/worklets/level-listening.js', async (route) => {
+				if (failNext) {
+					failNext = false;
+					await route.abort();
+					return;
+				}
+				await route.fallback();
+			});
+			await page.goto('./');
+
+			const status = page.locator('.invitation-floor').getByRole('status');
+
+			await page.getByRole('button', { name: 'Play' }).click();
+			await page.getByRole('button', { name: 'Let it listen' }).click();
+			await expect(status).toHaveText('This browser cannot open a microphone.');
+
+			await page.getByRole('button', { name: 'Stop' }).click();
+			await page.getByRole('button', { name: 'Play' }).click();
+			await page.getByRole('button', { name: 'Let it listen' }).click();
+
+			await expect(status).toHaveText('Listening');
+		});
 	});
 });
