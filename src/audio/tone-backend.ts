@@ -525,6 +525,19 @@ export function createToneBackend(): ToneBackend {
 		for (const track of opened.getTracks()) {
 			track.addEventListener('mute', handleTrackMute);
 		}
+		// A track can arrive muted, when the interruption that muted it was already
+		// under way as the listener answered the prompt. An incoming call is the
+		// ordinary way in. The event fired before anything was listening for it, or
+		// never fired at all, so waiting for one waits for the life of the page while
+		// the Invitation says Listening over a room it cannot hear.
+		//
+		// Read after attaching rather than before, so a mute landing between the two
+		// is caught by the listener instead of falling through the gap. That can fire
+		// the handler twice, which costs nothing: suspending is idempotent because an
+		// installed app fires mute and visibilitychange for the same suspension.
+		if (opened.getTracks().some(track => track.muted)) {
+			handleTrackMute();
+		}
 		// Awaiting here is safe in a way that awaiting ahead of getUserMedia would not
 		// be. iOS spends the tap's activation on whichever await runs first, which is
 		// why everything above stays synchronous, but nothing past the prompt needs

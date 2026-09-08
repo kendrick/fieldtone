@@ -264,4 +264,45 @@ test.describe('listening suspended', () => {
 		expect(await page.evaluate(() => navigator.audioSession?.type)).toBe('play-and-record');
 		await expect(status).toHaveText('Listening');
 	});
+
+	// An interruption already under way when the prompt is answered. WebKit mutes
+	// a track on the audio session interruption that a call raises, so a listener
+	// who accepts during one gets a track that is muted before anything can hear
+	// it go muted. The event fired before there was a listener, or never fired at
+	// all, and either way waiting for one waits forever.
+	test('suspends a grant that arrives already muted', async ({ page }): Promise<void> => {
+		await page.addInitScript((key: string) => {
+			window.localStorage.setItem(key, 'offered');
+		}, OFFERED_KEY);
+
+		await page.addInitScript(() => {
+			const granted: MediaStreamTrack[] = [];
+			window.__grantedTracks = granted;
+			const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+			navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
+				const stream = await open(constraints);
+				// `muted` is read-only and platform-driven, so the only way to model a
+				// track that arrived under an interruption is to shadow the getter. The
+				// track is otherwise real, and it still stops the way a real one does.
+				for (const track of stream.getTracks()) {
+					Object.defineProperty(track, 'muted', { configurable: true, get: (): boolean => true });
+				}
+				granted.push(...stream.getTracks());
+				return stream;
+			};
+		});
+
+		await page.goto('./');
+
+		const status = page.locator('.invitation-floor').getByRole('status');
+
+		await page.getByRole('button', { name: 'Play' }).click();
+		await page.getByRole('button', { name: 'Let it listen' }).click();
+
+		// The microphone is handed straight back rather than held open behind a
+		// status that claims to be listening to a room it cannot hear.
+		await expect.poll(() => page.evaluate(trackStates)).toEqual(['ended']);
+		await expect(status).toHaveText(SUSPENDED_MESSAGE);
+		await expect(page.getByRole('button', { name: 'Let it listen' })).toBeVisible();
+	});
 });
