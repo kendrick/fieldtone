@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createSilentScene } from '@/scenes/silent-scene';
 import {
+	forgetKeepListening,
 	KEEP_LISTENING_KEY,
 	keepListeningVisibility,
 	readKeepListening,
@@ -24,8 +25,15 @@ function stubStandalone(value: boolean): void {
 	});
 }
 
+function hiddenPort(): { isHidden: () => boolean; subscribe: () => () => void } {
+	return { isHidden: (): boolean => true, subscribe: () => (): void => {} };
+}
+
 afterEach((): void => {
 	window.localStorage.clear();
+	// The session choice outlives a test the way localStorage does, so it gets
+	// cleared the same way: state carried into the next case makes it lie.
+	forgetKeepListening();
 	Reflect.deleteProperty(navigator, 'standalone');
 	vi.restoreAllMocks();
 });
@@ -64,6 +72,45 @@ describe('readKeepListening / writeKeepListening', (): void => {
 
 	it('namespaces the key, because localStorage is shared across every project page an origin serves', (): void => {
 		expect(KEEP_LISTENING_KEY).toBe('fieldtone.listening.background');
+	});
+});
+
+describe('a write localStorage refuses', (): void => {
+	function refuseWrites(): void {
+		vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			throw new Error('QuotaExceededError');
+		});
+	}
+
+	// The dangerous half. A shared origin can run out of quota with this key
+	// already set to `on`, and before the session choice carried the decision a
+	// swallowed write left Listening running in the background over a control
+	// the listener had just switched off. Principle I is non-negotiable, so a
+	// disable has to take effect whether or not storage accepts it.
+	it('still turns the setting off, so no storage failure can hold the microphone open', (): void => {
+		window.localStorage.setItem(KEEP_LISTENING_KEY, 'on');
+		refuseWrites();
+
+		writeKeepListening(false);
+
+		expect(readKeepListening()).toBe(false);
+		expect(keepListeningVisibility(hiddenPort()).isHidden()).toBe(true);
+	});
+
+	// The safe half, and the reason storage is persistence rather than the
+	// source of truth: the choice holds for this session and is forgotten on
+	// reload, rather than not taking at all.
+	it('still turns the setting on for this session, and forgets it on reload', (): void => {
+		refuseWrites();
+
+		writeKeepListening(true);
+
+		expect(readKeepListening()).toBe(true);
+		expect(keepListeningVisibility(hiddenPort()).isHidden()).toBe(false);
+
+		forgetKeepListening();
+
+		expect(readKeepListening()).toBe(false);
 	});
 });
 

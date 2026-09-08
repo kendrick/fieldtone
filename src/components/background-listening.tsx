@@ -85,14 +85,12 @@ export function BackgroundListening({ runtime = sceneRuntime }: BackgroundListen
 
 	function handleChange(event: ChangeEvent<HTMLInputElement>): void {
 		const on = event.currentTarget.checked;
-		// Storage first, then the state that mirrors it, so the box can only show a
-		// choice storage was already asked to hold. writeKeepListening swallows the
-		// throw a browser blocking site data gives it, which leaves the box ticked
-		// over a flag keepListeningVisibility will go on reading as off. Listening
-		// then suspends the way it does by default, which is the safe half of
-		// Principle I to be wrong on.
+		// Write, then show what the setting actually reads back, rather than what
+		// was asked for. writeKeepListening holds the choice for this session even
+		// where storage refuses it, so the two agree — and reading rather than
+		// assuming is what keeps them unable to drift if that ever changes.
 		writeKeepListening(on);
-		setKeeping(on);
+		setKeeping(readKeepListening());
 	}
 
 	if (installed) {

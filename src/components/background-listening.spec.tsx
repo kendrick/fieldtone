@@ -4,7 +4,7 @@ import type { SceneRuntime } from '@/audio/scene-runtime';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { KEEP_LISTENING_KEY } from '@/audio/background-listening';
+import { forgetKeepListening, KEEP_LISTENING_KEY } from '@/audio/background-listening';
 import { createRecordingBackend } from '@/audio/recording-backend';
 import { createSceneRuntime } from '@/audio/scene-runtime';
 import { createSilentScene } from '@/scenes/silent-scene';
@@ -65,11 +65,13 @@ function checkbox(): HTMLInputElement {
 }
 
 describe('background-listening', () => {
-	// All three outlive a test: jsdom shares one localStorage across the file, the
-	// throwing-storage case replaces a prototype method, and `standalone` is
-	// defined on the shared navigator.
+	// All four outlive a test: jsdom shares one localStorage across the file, the
+	// session choice behind the setting is module state, the throwing-storage case
+	// replaces a prototype method, and `standalone` is defined on the shared
+	// navigator.
 	afterEach(() => {
 		window.localStorage.clear();
+		forgetKeepListening();
 		vi.restoreAllMocks();
 		Reflect.deleteProperty(navigator, 'standalone');
 	});
