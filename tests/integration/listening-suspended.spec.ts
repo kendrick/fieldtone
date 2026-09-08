@@ -1,8 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { AUDIBLE_THRESHOLD, renderBedRms } from './probe';
+import { AUDIBLE_THRESHOLD, isRealtimeAudioAvailable, renderBedRms } from './probe';
 
 // See listening.spec.ts for what this flag pre-sets and why.
 const OFFERED_KEY = 'fieldtone.invitation.listen';
+
+// tone-backend.ts's SESSION_FADE_SECONDS, spelled out because that constant is
+// not exported and a test importing the adapter would drag Tone into jsdom.
+const SESSION_FADE_SECONDS = 0.3;
 
 // The copy listen-invitation.tsx renders for `suspended`, spelled out rather
 // than imported from the component. A test that imported the string would pass
@@ -17,6 +21,7 @@ declare global {
 	interface Window {
 		__grantedTracks?: MediaStreamTrack[];
 		__setHidden?: (next: boolean) => void;
+		__denyFirstGrant?: () => void;
 	}
 }
 
@@ -152,6 +157,111 @@ test.describe('listening suspended', () => {
 
 		await invitation.click();
 		await expect.poll(() => page.evaluate(trackStates)).toEqual(['ended', 'ended', 'ended', 'live']);
+		await expect(status).toHaveText('Listening');
+	});
+
+	// Desktop Chromium has no Audio Session API, so `needsRecordSession()` reads
+	// undefined and the session switch never runs here without this. Same plain
+	// data property audio-session.spec.ts installs, and for the same reason: the
+	// stub covers which branch this repo takes, and the phone stays responsible
+	// for what iOS does with it.
+	function stubAudioSession(): void {
+		Object.defineProperty(navigator, 'audioSession', { configurable: true, value: { type: 'auto' } });
+	}
+
+	// A suspension can land while an accept is still at the prompt, and the page
+	// can come back before the browser ever answers it. That leaves two attempts
+	// in the backend at once, and the older one still believes it owns the audio
+	// session it moved on the way in.
+	test('leaves the session alone when a superseded accept is finally denied', async ({ page }): Promise<void> => {
+		await page.addInitScript((key: string) => {
+			window.localStorage.setItem(key, 'offered');
+		}, OFFERED_KEY);
+		await page.addInitScript(stubAudioSession);
+
+		// The first call is parked and answered by the test; every later one goes
+		// through to the fake device. Holding the first is what puts a second
+		// attempt beside it, which is the whole subject of this case.
+		await page.addInitScript(() => {
+			const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+			let held = true;
+			navigator.mediaDevices.getUserMedia = (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
+				if (!held) {
+					return open(constraints);
+				}
+				held = false;
+				return new Promise<MediaStream>((_, reject): void => {
+					window.__denyFirstGrant = (): void => {
+						const error = new Error('denied');
+						error.name = 'NotAllowedError';
+						reject(error);
+					};
+				});
+			};
+		});
+
+		await page.addInitScript(() => {
+			let hidden = false;
+			Object.defineProperty(document, 'visibilityState', {
+				configurable: true,
+				get: (): DocumentVisibilityState => hidden ? 'hidden' : 'visible',
+			});
+			Object.defineProperty(document, 'hidden', { configurable: true, get: (): boolean => hidden });
+			window.__setHidden = (next: boolean): void => {
+				hidden = next;
+				document.dispatchEvent(new Event('visibilitychange'));
+			};
+		});
+
+		await page.goto('./');
+
+		const status = page.locator('.invitation-floor').getByRole('status');
+
+		await page.getByRole('button', { name: 'Play' }).click();
+
+		// The reverse switch this case is about rides the audio clock, and a machine
+		// with no realtime audio freezes that clock at the first block. Without this
+		// guard the fade never resolves, the session is never moved back, and the
+		// assertion below passes while proving nothing.
+		test.skip(!(await page.evaluate(isRealtimeAudioAvailable)), 'the reverse switch rides the audio clock and this machine has no realtime audio');
+
+		await page.getByRole('button', { name: 'Let it listen' }).click();
+		await expect(status).toHaveText('Asking your browser for the microphone.');
+		// Polled, because the switch happens behind the fade that covers it rather
+		// than on the press. Reading once here reads the session the press started in.
+		await expect
+			.poll(() => page.evaluate(() => navigator.audioSession?.type))
+			.toBe('play-and-record');
+
+		// Away and back while the first accept is still unanswered. The resume opens
+		// a second microphone, and it pays no switch because the session is already
+		// where it needs to be.
+		await page.evaluate(() => {
+			window.__setHidden?.(true);
+		});
+		await page.evaluate(() => {
+			window.__setHidden?.(false);
+		});
+		await expect(status).toHaveText('Listening');
+
+		await page.evaluate(() => {
+			window.__denyFirstGrant?.();
+		});
+
+		// Let the audio clock run past the fade the reverse switch hides behind, so
+		// the read below lands after the moment this case is about rather than before
+		// it. Polling for the value we want would be satisfied on its first tick,
+		// while the session is still right, and would never see it change.
+		const clockBefore = await page.evaluate(() => window.__fieldtone?.readContextTime() ?? 0);
+		await expect
+			.poll(() => page.evaluate(() => window.__fieldtone?.readContextTime() ?? 0))
+			.toBeGreaterThan(clockBefore + SESSION_FADE_SECONDS * 2);
+
+		// The denial belongs to an attempt that no longer owns anything. Putting the
+		// session back would pull `play-and-record` out from under the microphone the
+		// resume is holding, and on iOS that is capture the listener can no longer
+		// hear.
+		expect(await page.evaluate(() => navigator.audioSession?.type)).toBe('play-and-record');
 		await expect(status).toHaveText('Listening');
 	});
 });

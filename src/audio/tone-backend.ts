@@ -457,7 +457,15 @@ export function createToneBackend(): ToneBackend {
 			// `stopListening` leaves it alone on purpose, and resume() is the only
 			// other caller of `requestPlaybackSession`. Guarded on `switching` because
 			// a path that moved nothing has nothing to undo.
-			if (switching) {
+			//
+			// Guarded on the epoch as well, because a denial can arrive long after the
+			// attempt that asked stopped being the one that matters: the listener can
+			// leave the prompt up while the app is backgrounded and resumed, and the
+			// resume opens a microphone of its own. Putting the session back then would
+			// pull `play-and-record` out from under a live capture. A superseded attempt
+			// leaves the pending return alone too, since that timeout is what brings the
+			// Bed back and nothing below would re-arm it.
+			if (switching && epoch === listeningEpoch) {
 				if (returning !== undefined) {
 					Tone.getContext().clearTimeout(returning);
 				}
@@ -470,7 +478,14 @@ export function createToneBackend(): ToneBackend {
 						Tone.getContext().setTimeout(resolve, SESSION_FADE_SECONDS);
 					});
 				}
-				requestPlaybackSession();
+				// Read again after the fade. A suspend or a stop can land inside those
+				// 300 ms, and by then the session belongs to whoever holds the
+				// microphone. The Bed still comes back below either way; only the
+				// session move is skipped, because a voice faded to zero with nothing
+				// scheduled to raise it is silence for the life of the page.
+				if (epoch === listeningEpoch) {
+					requestPlaybackSession();
+				}
 				if (faded !== undefined) {
 					bringBackAfterSwitch(faded);
 				}
