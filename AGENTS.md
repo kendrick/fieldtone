@@ -40,6 +40,8 @@ Every function in `tests/integration/probe.ts` is handed to `page.evaluate` and 
 
 Run `pnpm lint`, `lint:css`, `typecheck`, `test` and `test:e2e` before calling anything done. CI runs all five plus the static export, but drives Playwright on Chromium only, so WebKit and Firefox are a local check where a flake invisible to CI has already surfaced.
 
+This file has a 900-word budget outside the `nextjs-agent-rules` block; `pnpm test` enforces the budget.
+
 ## Audio rules no config states
 
 These cost real bugs to learn. Each one is invisible to the type checker and to a green test suite.
