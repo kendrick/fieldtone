@@ -45,10 +45,11 @@ export interface AudioBackend {
 	setParameter: (name: string, value: number) => void;
 	fadeIn: (seconds: number) => void;
 	fadeOut: (seconds: number) => void;
-	// Opens the microphone, and nothing more: the stream is held but not wired
-	// into the graph. Async because the browser's permission prompt is, and
-	// because on iOS the audio session has to move to `play-and-record` first,
-	// which is audible enough (ADR 0004) that the Bed is faded down across it.
+	// Opens the microphone and runs Level Listening on it, which is what makes
+	// `onSignal` produce anything. Async because the browser's permission prompt
+	// is, and because on iOS the audio session has to move to `play-and-record`
+	// first, which is audible enough (ADR 0004) that the Bed is faded down
+	// across it.
 	// So the permission prompt is no longer the accept path's first await, and
 	// the bet is that the tap's transient activation outlasts a fade measured in
 	// hundreds of milliseconds—unlike `resume`, where the context itself is what

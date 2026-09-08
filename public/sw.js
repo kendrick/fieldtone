@@ -11,6 +11,17 @@ const SHELL = self.registration.scope;
 // on the attribute keeps manifest.webmanifest and the icon links out of the cache.
 const CHUNKS = /(?:src|href)="([^"]*_next\/static\/[^"]*)"/g;
 
+// Fetched at runtime by tone-backend.ts rather than named in the HTML, so the
+// scrape above cannot find them and cacheFirst below would otherwise hold the
+// first copy it ever stored for the life of the cache. A worklet is the one
+// cached asset whose contract has to match the chunks beside it: a deploy that
+// changes what the processor posts leaves a returning listener running the old
+// one under the new app, with the message shape silently disagreeing.
+//
+// Listed by hand because nothing links them. `tests/unit/service-worker-assets.spec.ts`
+// is what keeps this list in step with what the backend actually loads.
+const RUNTIME_ASSETS = ['worklets/level-listening.js', 'worklets/level-listening-maths.js'];
+
 // Shared by install and by every navigation that reaches the network. That sharing
 // is what moves a returning visitor onto a build published since their last visit
 // instead of stranding them on the one they first installed.
@@ -52,6 +63,21 @@ async function applyRevision(response) {
 	await Promise.all(held
 		.filter((request) => request.url.includes('_next/static/') && !wanted.has(request.url))
 		.map((request) => cache.delete(request)));
+	// Replaced rather than evicted. Deleting would leave a listener who goes offline
+	// between this navigation and their next press with no worklet at all, which is
+	// a worse trade than a copy that is one deploy old. Each is fetched on its own so
+	// one failure cannot cost the other, and a failed fetch simply leaves the
+	// previous copy in place.
+	await Promise.all(RUNTIME_ASSETS.map(async (path) => {
+		const url = new URL(path, SHELL).href;
+		try {
+			const response = await fetch(url, { cache: 'no-cache' });
+			if (response.ok)
+				await cache.put(url, response);
+		} catch {
+			// Offline, or the asset is gone. The held copy is still the best answer.
+		}
+	}));
 }
 
 async function cacheFirst(request) {
