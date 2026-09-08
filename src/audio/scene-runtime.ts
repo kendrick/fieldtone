@@ -212,7 +212,8 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 			case 'listening':
 				return { ok: false, reason: 'already-listening' };
 			case 'not-listening':
-			case 'refused': {
+			case 'refused':
+			case 'suspended': {
 				const opening = beginOpening(state);
 				// Read before the await, compared after it. This is the session the
 				// listener accepted in, and the only one the microphone may open into.

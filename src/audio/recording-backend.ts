@@ -32,6 +32,10 @@ export interface RecordingBackend extends AudioBackend {
 	// touches `commands` — recording it would make the runtime's own output log
 	// include something the runtime never asked for.
 	emitSignal: (name: string, value: number) => void;
+	// Stands in for iOS suspending capture and firing `mute` on the track, which
+	// no jsdom test can produce. No BackendCommand here either, for the reason
+	// emitSignal has none.
+	emitMute: () => void;
 }
 
 // `fail-once` is what lets a test watch a runtime recover: the command throws on
@@ -110,6 +114,8 @@ export function createRecordingBackend(
 	// loop is iterating it, and so double-subscribing the same function is a
 	// no-op instead of a double call.
 	const signalListeners = new Set<SignalListener>();
+	// A Set for the same reasons as signalListeners above.
+	const muteListeners = new Set<() => void>();
 	// Normalized to an array once here so startListening below can index into it
 	// without re-checking the bare-value case on every call.
 	const listeningOutcomes: readonly ListeningOutcome[] = options.listening === undefined
@@ -194,6 +200,17 @@ export function createRecordingBackend(
 		emitSignal: (name: string, value: number): void => {
 			for (const listener of signalListeners) {
 				listener(name, value);
+			}
+		},
+		onMute: (listener: () => void): (() => void) => {
+			muteListeners.add(listener);
+			return (): void => {
+				muteListeners.delete(listener);
+			};
+		},
+		emitMute: (): void => {
+			for (const listener of muteListeners) {
+				listener();
 			}
 		},
 	};

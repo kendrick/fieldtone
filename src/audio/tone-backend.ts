@@ -185,6 +185,15 @@ export function createToneBackend(): ToneBackend {
 	// adapter reports what the microphone gives it, and a Scene's declarations
 	// decide what any of it drives.
 	const signalListeners = new Set<SignalListener>();
+	// Fanned out when the platform takes the microphone away, not when a reading
+	// arrives. One handler serves every track, and it is a named function so
+	// stopListening can hand the same reference back to removeEventListener.
+	const muteListeners = new Set<() => void>();
+	function handleTrackMute(): void {
+		for (const listener of muteListeners) {
+			listener();
+		}
+	}
 	// The last value per name, kept for the probe. The runtime holds the copy the
 	// app runs on, in its own store; this one answers a suite that has no ears and
 	// needs to see that a reading arrived at all.
@@ -487,6 +496,20 @@ export function createToneBackend(): ToneBackend {
 		// await still has to find tracks to stop, and `stream` is the only thing
 		// stopListening reads to find them.
 		stream = opened;
+		// Attached here for the reason `stream` is set here. A mute can land inside
+		// the module fetch below, and the runtime still has to hear about it. Above
+		// the epoch check would be wrong, because that path stops the tracks and
+		// returns without ever holding them.
+		//
+		// A mute with the page still visible, an incoming call being the usual one,
+		// does not resume itself when the call ends. Principle I is non-negotiable,
+		// so suspending Listening means `track.stop()` rather than
+		// `enabled = false`, and a stopped track is ended, so it will never fire
+		// `unmute` and there is nothing to resume from. Offering the Invitation
+		// again is the deliberate way back.
+		for (const track of opened.getTracks()) {
+			track.addEventListener('mute', handleTrackMute);
+		}
 		// Awaiting here is safe in a way that awaiting ahead of getUserMedia would not
 		// be. iOS spends the tap's activation on whichever await runs first, which is
 		// why everything above stays synchronous, but nothing past the prompt needs
@@ -572,6 +595,10 @@ export function createToneBackend(): ToneBackend {
 		listeningInput = undefined;
 		levelListening = undefined;
 		for (const track of stream?.getTracks() ?? []) {
+			// Removed before the stop, so a mute the platform fires while releasing the
+			// track cannot read as the platform taking a microphone the app is already
+			// handing back. onMute answers for a track the backend still holds.
+			track.removeEventListener('mute', handleTrackMute);
 			track.stop();
 		}
 		stream = undefined;
@@ -605,5 +632,12 @@ export function createToneBackend(): ToneBackend {
 		};
 	}
 
-	return { resume, start, setParameter, fadeIn, fadeOut, startListening, stopListening, stop, onSignal, probe };
+	function onMute(listener: () => void): () => void {
+		muteListeners.add(listener);
+		return (): void => {
+			muteListeners.delete(listener);
+		};
+	}
+
+	return { resume, start, setParameter, fadeIn, fadeOut, startListening, stopListening, stop, onSignal, onMute, probe };
 }

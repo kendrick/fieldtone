@@ -1,4 +1,4 @@
-// What the microphone is doing right now, as four states rather than a pile of
+// What the microphone is doing right now, as five states rather than a pile of
 // booleans. `opening` exists because `getUserMedia` is awaited, and that gap is
 // long enough for a second accept to land in it.
 
@@ -28,7 +28,15 @@ export interface Refused {
 	readonly reason: ListeningRejectionReason;
 }
 
-export type ListeningState = NotListening | Opening | Listening | Refused;
+// A page the listener has navigated away from or backgrounded, not a browser
+// refusal and not a stop. Nobody answered the second Invitation either way, so
+// the state that comes back when they return has to be neither `refused` nor
+// `not-listening`.
+export interface Suspended {
+	readonly status: 'suspended';
+}
+
+export type ListeningState = NotListening | Opening | Listening | Refused | Suspended;
 
 export const notListening: NotListening = { status: 'not-listening' };
 
@@ -44,7 +52,11 @@ export const notListening: NotListening = { status: 'not-listening' };
 // worth another press: a microphone gets plugged in, the app holding it gets
 // closed. Only `refused` itself is permanent, and the browser—not this
 // machine—is what makes it so; the Invitation hides the button for that case.
-export function beginOpening(_from: NotListening | Refused): Opening {
+// `Suspended` joins `NotListening | Refused` here for the same reason a stop
+// does not clear it away on its own: a page that comes back from the
+// background is a fresh press, and the listener asking again is what
+// `beginOpening` already means for the other two starting points.
+export function beginOpening(_from: NotListening | Refused | Suspended): Opening {
 	return { status: 'opening' };
 }
 
@@ -75,5 +87,28 @@ export function dismissRefusal(_from: Refused): NotListening {
 }
 
 export function endListening(_from: Listening): NotListening {
+	return notListening;
+}
+
+// Accepts `Listening` and `Opening` both, because the backend holds the
+// microphone stream from the moment the grant lands—`stream = opened` in
+// tone-backend.ts runs before startListening resolves—so a suspension landing
+// mid-fetch still has a real track to release, not just a promise to let run.
+// Leaving `Opening` unhandled would strand that track: a getUserMedia parked
+// by a hidden page only resolves once the page is visible again, and by then
+// a newer attempt already owns the store, so nothing left in `opening` would
+// ever get the chance to close what it opened.
+export function suspendListening(_from: Listening | Opening): Suspended {
+	return { status: 'suspended' };
+}
+
+// Its own edge rather than a reuse of `endListening` or `abandonOpening`,
+// because both of those would lie about what happened. `endListening` says a
+// microphone was open and is now closed, but a suspended session may never
+// have gotten past the prompt. `abandonOpening` says an attempt is still out
+// waiting on the browser, but a suspension already resolved that one way or
+// the other before landing here. Only `dismissSuspension` describes what is
+// actually true: nobody answered, and now nobody is asking.
+export function dismissSuspension(_from: Suspended): NotListening {
 	return notListening;
 }
