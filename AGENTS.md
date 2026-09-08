@@ -1,6 +1,6 @@
 # FieldTone
 
-A progressive web app that turns the sound around you into generative ambient music. Read `CONTEXT.md` before naming anything: the domain words are load-bearing and each one lists the synonyms to avoid.
+A progressive web app that turns the sound around you into generative ambient music. Read `CONTEXT.md` before naming anything: the domain words are load-bearing and each lists the synonyms to avoid.
 
 ## Binding documents
 
@@ -28,17 +28,17 @@ Changing `src/audio/` or `src/scenes/`? `docs/agents/file-map.md` names what eac
 
 `runtime.ts` wires the seam together at module scope, which is safe only because nothing it constructs allocates an audio node before the first press. Read its comment before adding a Scene, because it is the one place the module-scope rule below is deliberately bent.
 
-The runtime holds listener values and signal values apart in the store and combines them only on the way out to the backend, which is what keeps a Control Signal out of `serializeParameters` and out of a share link.
+The runtime holds listener values and signal values apart in the store and combines them only on the way out to the backend, which is what keeps a Control Signal out of `serializeParameters` and a share link.
 
 A Scene's schema and Control Signal declarations live in Tone-free files beside its Bed, so they can be asserted on under jsdom.
 
 `src/components/parameter-controls.tsx` is the only file that touches `history`. It and `share-control.tsx` are the two that read `window.location`, and share-control reads `href` alone, never `search`, so a link carries every parameter the Scene declares rather than what a bare `/` holds. `listen-invitation.tsx` is the only file that touches `localStorage`.
 
-`src/app/manifest.ts` is the one file that writes the `/fieldtone` base path by hand. Its comments carry the base-path rule Next does not apply, the reason `force-static` is there, and the command that regenerates every icon from `icon.svg`.
+`src/app/manifest.ts` is the one file that writes the `/fieldtone` base path by hand, and its comments carry the command that regenerates the icons from `icon.svg`.
 
 Every function in `tests/integration/probe.ts` is handed to `page.evaluate` and runs inside the browser, so none may close over module scope.
 
-Run `pnpm lint`, `pnpm lint:css`, `pnpm typecheck`, `pnpm test` and `pnpm test:e2e` before calling anything done. CI runs all five plus the static export but drives Playwright on Chromium only, so WebKit and Firefox are a local check, where a flake invisible to CI has already surfaced.
+Run `pnpm lint`, `lint:css`, `typecheck`, `test` and `test:e2e` before calling anything done. CI runs all five plus the static export, but drives Playwright on Chromium only, so WebKit and Firefox are a local check where a flake invisible to CI has already surfaced.
 
 ## Audio rules no config states
 
@@ -50,7 +50,9 @@ These cost real bugs to learn. Each one is invisible to the type checker and to 
 
 **Prove audibility with an `OfflineAudioContext`.** A headless browser reports its AudioContext as `running` and then freezes the clock at the first block, so a realtime meter reads zero whether the graph works or is broken. An offline render needs no sound card and answers the same way everywhere. Guard any assertion that depends on the realtime clock advancing, and skip rather than assert on silence. `Tone.Offline` swaps the global context around an awaited callback, so never let two renders overlap.
 
-**Keep the runtime Tone-free, and let each Scene build its own graph.** Two kinds of file import Tone as a value: `tone-backend.ts`, which owns the envelope and the master bus, and a Scene's Bed builder, which declares the graph that Scene plays. Everything between them stays Tone-free, including `audio-backend.ts`, `scene-runtime.ts` and `recording-backend.ts`, which is what lets the runtime be tested with no AudioContext anywhere near it. Moving a Scene's node construction into the adapter would defeat that, because the adapter would then need to know every Scene and adding one would mean editing it. An `import type` from Tone is fine anywhere, since `verbatimModuleSyntax` erases it.
+**Keep the runtime Tone-free, and let each Scene build its own graph.** Two kinds of file import Tone as a value: `tone-backend.ts`, which owns the envelope and the master bus, and a Scene's Bed builder, which declares the graph that Scene plays. Everything between them stays Tone-free, which is what lets the runtime be tested with no AudioContext anywhere near it. An adapter that built Scene graphs would have to know every Scene, so adding one would mean editing it. An `import type` from Tone is fine anywhere, since `verbatimModuleSyntax` erases it.
+
+**Before you edit anything under `public/worklets/`, read that file's header.** Tone's `rawContext` is standardized-audio-context, which re-wraps the source and constrains the module's shape; a break there reads as a browser that cannot open a microphone.
 
 **Schedule against the audio clock.** Principle V rules out JS timers and polling loops. Tone's context has its own `setTimeout` that rides the existing ticker and costs nothing extra.
 
