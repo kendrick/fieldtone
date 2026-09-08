@@ -99,9 +99,16 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 		setReturning(readOffered());
 	}, []);
 
-	// `listening` and `refused` are in the gate beside `playing` so that stopping
-	// the Bed cannot pull an outcome out from under a listener still reading it.
-	const offered = playbackStatus === 'playing' || listening.status === 'listening' || listening.status === 'refused';
+	// `listening`, `refused` and `suspended` are in the gate beside `playing` so
+	// that stopping the Bed cannot pull an outcome out from under a listener still
+	// reading it. A suspension is an outcome about a Bed that is still playing,
+	// the same way a refusal is. Without it the Invitation rests on the `playing`
+	// clause alone, and an unmount there drops the focus on its button onto the
+	// body.
+	const offered = playbackStatus === 'playing'
+		|| listening.status === 'listening'
+		|| listening.status === 'refused'
+		|| listening.status === 'suspended';
 
 	const isListening = listening.status === 'listening';
 	// getUserMedia is awaited, and the listener can sit in that gap for as long as
@@ -109,6 +116,7 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	// press looked ignored: the button stayed untouched and the live region stayed
 	// empty for the whole wait.
 	const isOpening = listening.status === 'opening';
+	const isSuspended = listening.status === 'suspended';
 	const rejection = listening.status === 'refused' ? listening : null;
 	const offering = rejection === null || worthAnotherPress.includes(rejection.reason);
 
@@ -158,7 +166,7 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	// regions it is already watching, so the region has to be there first.
 	//
 	// An if-chain rather than a ternary chain now that `opening` has something to
-	// say: four outcomes is past what a reader can hold in one expression.
+	// say: five outcomes is past what a reader can hold in one expression.
 	let statusMessage = '';
 	if (isOpening) {
 		// Not "opening the microphone", which claims more than is true: the browser
@@ -168,6 +176,19 @@ export function ListenInvitation({ runtime = sceneRuntime }: ListenInvitationPro
 	}
 	else if (isListening) {
 		statusMessage = 'Listening';
+	}
+	else if (isSuspended) {
+		// Neutral about the cause on purpose. The suspension a listener can watch
+		// happen is a phone call or an audio-route change with the page still in
+		// front of them; the backgrounding case runs while nobody is looking at the
+		// screen. Either name is wrong for the other case, and neither one changes
+		// what the listener does next.
+		//
+		// A page coming back from the background walks this region from here
+		// through "Asking your browser for the microphone." to "Listening" within a
+		// moment. A polite region reads what it finds when it gets there rather
+		// than all three, so the resume path needs no message of its own.
+		statusMessage = 'FieldTone stopped listening. Press Let it listen to start again.';
 	}
 	else if (rejection !== null) {
 		statusMessage = rejectionMessages[rejection.reason];
