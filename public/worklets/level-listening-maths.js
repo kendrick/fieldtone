@@ -29,6 +29,15 @@ export const SMOOTHING_RELEASE_SECONDS = 0.4;
 // someone did, and the absolute level below which nothing counts however quiet
 // the floor got. The minimum is what stops a silent room from making an onset
 // out of its own hiss once the floor has settled far enough down.
+//
+// Both thresholds read per-block RMS rather than the smoothed loudness beside
+// them, which puts the boundary along attack rather than level. Measured on an
+// iPhone 15 Pro, iOS 26.6.1: typing fires at a smoothed peak of -49 dBFS while a
+// sniff at -49 does not, because a keystroke concentrates its energy into a
+// couple of 2.7 ms blocks and a sniff spreads the same energy across dozens.
+// Speech at six feet and a cough both fire; a quiet room at -59 does not. So a
+// loudness reading cannot predict an onset, and anything tuned against one is
+// tuned against the wrong number.
 const ONSET_MARGIN_DB = 6;
 const ONSET_MINIMUM_DBFS = -40;
 
