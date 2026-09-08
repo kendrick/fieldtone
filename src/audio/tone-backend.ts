@@ -26,13 +26,23 @@ const FADE_SECONDS = 0.3;
 // as FADE_SECONDS by default rather than by derivation—this one answers to what
 // the dropout sounds like on an iPhone, and is expected to be tuned there.
 const SESSION_FADE_SECONDS = 0.3;
-// The silence the platform imposes after the switch, which ADR 0004 measured on
-// device as roughly half a second to a second. The Bed waits it out before it
-// fades back, because a ramp started the moment the switch returns runs to
-// completion inside a dropout the listener is still hearing, and audio would
-// come back at full level rather than fading in. A guess out of a range measured
-// once on one device, and only a phone can tune it.
-const SESSION_SWITCH_DROPOUT_SECONDS = 0.7;
+// The silence the platform imposes after the switch. The Bed waits it out before
+// it fades back, because a ramp started the moment the switch returns runs to
+// completion inside a dropout the listener is still hearing, and audio would come
+// back at full level rather than fading in.
+//
+// Tuned by ear on an iPhone 15 Pro, iOS 26.6.1, Safari 26.6, across both the
+// accept and the denial path, which share this constant (#57). At 0.7 the dead
+// air before the fade was obvious. At 0.3 it was still a shade long. 0.25 is one
+// step below the last value anyone actually heard, which makes it the only number
+// in this comment not confirmed on a phone; the failure to listen for is the Bed
+// snapping back at full level, which means the ramp finished inside the dropout
+// and this wants to go back up.
+//
+// Shorter than ADR 0004, which puts the switch's silence at roughly half a second
+// to a second. That range was measured once and this contradicts it, so treat the
+// ADR's figure as the weaker of the two until someone re-measures it.
+const SESSION_SWITCH_DROPOUT_SECONDS = 0.25;
 // Long enough for the stop to have taken effect before the nodes go away:
 // disposing a node mid-release cuts the tail the Bed just scheduled.
 const DISPOSE_GRACE_SECONDS = 0.05;
