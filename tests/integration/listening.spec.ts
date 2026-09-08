@@ -14,6 +14,7 @@ const OFFERED_KEY = 'fieldtone.invitation.listen';
 declare global {
 	interface Window {
 		__grantedTracks?: MediaStreamTrack[];
+		__releaseGrant?: () => void;
 	}
 }
 
@@ -199,6 +200,61 @@ test.describe('listen invitation', () => {
 			);
 			await page.getByRole('button', { name: 'Stop' }).click();
 
+			await expect
+				.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
+				.toBe(true);
+		});
+
+		// The third window a grant can land in, and the only one the runtime cannot
+		// clean up after. Its siblings above stop during the module fetch, where the
+		// backend already holds `stream` and finds tracks to release. This one stops
+		// while the prompt is still up, so the backend holds nothing yet, and the
+		// grant arrives afterwards to a session that already ended.
+		//
+		// scene-runtime.ts hands the microphone back for that case too, but only once
+		// startListening resolves, and the hung route below means it never does. The
+		// epoch check in tone-backend.ts is the only thing left, which is why removing
+		// it leaves every other case in this file green.
+		test('hands the microphone back when a stop lands while the prompt is still up', async ({ page }): Promise<void> => {
+			await page.addInitScript((key: string) => {
+				window.localStorage.setItem(key, 'offered');
+			}, OFFERED_KEY);
+			await page.addInitScript(() => {
+				const granted: MediaStreamTrack[] = [];
+				window.__grantedTracks = granted;
+				const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+				// Held until the test lets it go. Chromium's fake UI answers the prompt
+				// instantly, which closes the window this case needs; a real prompt stays
+				// pending for as long as the listener takes to read it.
+				navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
+					await new Promise<void>((release) => {
+						window.__releaseGrant = release;
+					});
+					const stream = await open(constraints);
+					granted.push(...stream.getTracks());
+					return stream;
+				};
+			});
+			// Hung rather than aborted, so the attempt parks past the grant and the
+			// runtime's own recheck never runs.
+			await page.route('**/worklets/level-listening.js', () => {});
+			await page.goto('./');
+
+			await page.getByRole('button', { name: 'Play' }).click();
+			await page.getByRole('button', { name: 'Let it listen' }).click();
+			await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
+				'Asking your browser for the microphone.',
+			);
+
+			// Stop first, grant second. That order is the whole case.
+			await page.getByRole('button', { name: 'Stop' }).click();
+			await page.evaluate(() => {
+				window.__releaseGrant?.();
+			});
+
+			await expect
+				.poll(() => page.evaluate(() => (window.__grantedTracks?.length ?? 0) > 0))
+				.toBe(true);
 			await expect
 				.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
 				.toBe(true);
