@@ -12,7 +12,7 @@ The error is bounded at half a step, which is 0.005 on both of Ember's parameter
 
 ## Why the slider does not win instead
 
-#36 measured three ways to make the slider tell the whole truth. Each costs more than the rounding does.
+Ticket #36 measured three ways to make the slider tell the whole truth. Each costs more than the rounding does.
 
 Fitting the grid to the values needs a step of `0.0005`, which is what preserving every value Ember could previously produce costs. That is 1600 arrow presses to cross Space and 4500 to cross Brightness, which fails Principle II's keyboard requirement far worse than a rounded display fails anything.
 
