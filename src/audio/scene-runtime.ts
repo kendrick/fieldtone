@@ -4,6 +4,8 @@ import type { AudioBackend } from './audio-backend';
 
 import type { ListeningRejectionReason, ListeningState } from './listening-state';
 
+import type { PageVisibility } from './page-visibility';
+
 import type { PlaybackState } from './playback-state';
 
 import type { SignalValues } from '@/scenes/control-signals';
@@ -15,7 +17,8 @@ import { clampSignalValue, defaultSignalValues, signalOffset } from '@/scenes/co
 import { deserializeParameterValues, serializeParameterValues } from '@/scenes/parameter-serialization';
 import { clampParameterValue, defaultParameterValues } from '@/scenes/parameters';
 import { ListeningRejection } from './audio-backend';
-import { abandonOpening, beginOpening, completeOpening, dismissRefusal, endListening, notListening, refused } from './listening-state';
+import { abandonOpening, beginOpening, completeOpening, dismissRefusal, dismissSuspension, endListening, notListening, refused, suspendListening } from './listening-state';
+import { alwaysVisible } from './page-visibility';
 import { beginStart, completeStart, failStart, idle, stop as stopPlayback } from './playback-state';
 
 export const FADE_IN_SECONDS = 0.3;
@@ -82,7 +85,11 @@ function assertNever(value: never): never {
 	throw new Error(`unreachable runtime state: ${JSON.stringify(value)}`);
 }
 
-export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRuntime {
+// `visibility` defaults to a port that never reports hidden, so every call site
+// with nothing to say about backgrounding stands unchanged, tests included. The
+// port is injected because this file evaluates in Node during the static
+// export's prerender, where there is no `document` to read.
+export function createSceneRuntime(backend: AudioBackend, scene: Scene, visibility: PageVisibility = alwaysVisible): SceneRuntime {
 	const store = createStore<RuntimeState>()(() => ({
 		playback: idle,
 		listening: notListening,
@@ -212,7 +219,8 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 			case 'listening':
 				return { ok: false, reason: 'already-listening' };
 			case 'not-listening':
-			case 'refused': {
+			case 'refused':
+			case 'suspended': {
 				const opening = beginOpening(state);
 				// Read before the await, compared after it. This is the session the
 				// listener accepted in, and the only one the microphone may open into.
@@ -314,6 +322,20 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 				}
 
 				store.setState({ listening: completeOpening(opening) });
+
+				// Two windows close here, and a live microphone behind an invisible page
+				// fits through either. The hide event can fail to get out before WebKit
+				// suspends the process, and even when it does fire, the grant can land
+				// after it: the listener answers the prompt, then switches apps while the
+				// module fetch behind it is still running. Reading the port here, after
+				// the await, is why `isHidden` is a function instead of a cached flag.
+				//
+				// Still `ok: true`. The grant succeeded, and the suspension is a second
+				// event about the microphone rather than the answer to this press.
+				if (visibility.isHidden()) {
+					suspend();
+				}
+
 				return { ok: true };
 			}
 			default:
@@ -339,6 +361,15 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 			return { ok: true };
 		}
 
+		// No backend command: the suspension already released the microphone, and a
+		// second stopListening would log a close nobody performed. Still `ok`,
+		// because the press calls off the resume that the next visible edge would
+		// otherwise fire—the listener declining to be asked again.
+		if (state.status === 'suspended') {
+			store.setState({ listening: dismissSuspension(state) });
+			return { ok: true };
+		}
+
 		if (state.status !== 'listening') {
 			return { ok: false, reason: 'not-listening' };
 		}
@@ -346,6 +377,52 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		backend.stopListening();
 		store.setState({ listening: endListening(state) });
 		return { ok: true };
+	}
+
+	// Backgrounding closes the microphone and nothing else, which is ADR 0004's
+	// posture in one function: the Bed plays on, and the state that comes back is
+	// neither `refused` (nobody said no) nor `not-listening` (nobody pressed
+	// anything). Principle I is why the app suspends for itself instead of waiting
+	// for the platform: a Safari tab holds capture open for the life of the tab,
+	// so an app that waited would keep listening from a pocket.
+	//
+	// The status check makes this idempotent, which is load-bearing. An installed
+	// iOS app fires the track's mute event and then visibilitychange about nine
+	// tenths of a second later, so a second arrival is the ordinary case and has
+	// to cost nothing. Late and duplicate events are WebKit behaving as measured,
+	// not an error to report.
+	function suspend(): void {
+		const state = store.getState().listening;
+
+		if (state.status !== 'listening' && state.status !== 'opening') {
+			return;
+		}
+
+		backend.stopListening();
+		store.setState({ listening: suspendListening(state) });
+	}
+
+	// Named `resumeSuspended` because `resume` is already the backend's word for
+	// starting the AudioContext, and one name over two unrelated operations reads
+	// as one operation.
+	//
+	// Only the visible edge may call this. A getUserMedia issued by a hidden page
+	// does not reject; it parks until the page comes back, so asking on the way
+	// out would strand an attempt in `opening` with nothing left to answer it.
+	//
+	// Nothing here touches backend.resume() either. Playback never stopped, so
+	// there is no context to restart, and awaiting resume() from a
+	// visibilitychange handler is a known WebKit hang.
+	//
+	// Fire and forget, the same way a press is. A rejection lands in the store as
+	// `refused`, which the Invitation already has a message for, so there is
+	// nothing here that a caller could do with the result.
+	function resumeSuspended(): void {
+		if (store.getState().listening.status !== 'suspended') {
+			return;
+		}
+
+		void startListening();
 	}
 
 	function stop(): StopResult {
@@ -432,12 +509,13 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 	// Subscribed at creation, not at start: a reading that lands while idle is
 	// still the state of the room, and the next press builds the graph at it.
 	//
-	// The unsubscribe is deliberately dropped. A runtime and the backend under it
+	// The unsubscribe is deliberately dropped, here and on the two subscriptions
+	// below it. A runtime, the backend under it and the visibility port beside it
 	// are constructed together in runtime.ts and live as long as the module does,
-	// so neither can outlive the other and there is nothing to leak. Holding the
-	// function in a field nothing calls would only imply a teardown SceneRuntime
-	// does not have; the day a runtime becomes disposable, that method is where
-	// this call goes.
+	// so none can outlive the others and there is nothing to leak. Holding the
+	// three functions in fields nothing calls would only imply a teardown
+	// SceneRuntime does not have; the day a runtime becomes disposable, that
+	// method is where these calls go.
 	backend.onSignal((name: string, value: number): void => {
 		const signal = scene.controlSignals[name];
 
@@ -465,6 +543,27 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 		}
 
 		backend.setParameter(signal.parameter, effective);
+	});
+
+	// Both suspend triggers ADR 0004 names, subscribed together because neither
+	// one covers both surfaces. An installed iOS app suspends capture itself and
+	// says so through the track's mute event, roughly nine tenths of a second
+	// ahead of anything the page hears. A Safari tab fires no mute at all and
+	// holds the microphone for the life of the tab, so on that surface the page
+	// event is the only warning there is.
+	backend.onMute(suspend);
+
+	// The event says a transition happened and nothing about which way. WebKit can
+	// deliver visibilitychange late, on resume, already reading `visible` (bug
+	// 207256), so this handler reads the direction off the port instead of
+	// inferring it from the event's arrival.
+	visibility.subscribe((): void => {
+		if (visibility.isHidden()) {
+			suspend();
+		}
+		else {
+			resumeSuspended();
+		}
 	});
 
 	return { start, stop, startListening, stopListening, setParameter, getState, schema: scene.parameters, store, serializeParameters, applySerializedParameters };

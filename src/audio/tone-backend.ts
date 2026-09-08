@@ -185,6 +185,15 @@ export function createToneBackend(): ToneBackend {
 	// adapter reports what the microphone gives it, and a Scene's declarations
 	// decide what any of it drives.
 	const signalListeners = new Set<SignalListener>();
+	// Fanned out when the platform takes the microphone away, not when a reading
+	// arrives. One handler serves every track, and it is a named function so
+	// stopListening can hand the same reference back to removeEventListener.
+	const muteListeners = new Set<() => void>();
+	function handleTrackMute(): void {
+		for (const listener of muteListeners) {
+			listener();
+		}
+	}
 	// The last value per name, kept for the probe. The runtime holds the copy the
 	// app runs on, in its own store; this one answers a suite that has no ears and
 	// needs to see that a reading arrived at all.
@@ -448,7 +457,15 @@ export function createToneBackend(): ToneBackend {
 			// `stopListening` leaves it alone on purpose, and resume() is the only
 			// other caller of `requestPlaybackSession`. Guarded on `switching` because
 			// a path that moved nothing has nothing to undo.
-			if (switching) {
+			//
+			// Guarded on the epoch as well, because a denial can arrive long after the
+			// attempt that asked stopped being the one that matters: the listener can
+			// leave the prompt up while the app is backgrounded and resumed, and the
+			// resume opens a microphone of its own. Putting the session back then would
+			// pull `play-and-record` out from under a live capture. A superseded attempt
+			// leaves the pending return alone too, since that timeout is what brings the
+			// Bed back and nothing below would re-arm it.
+			if (switching && epoch === listeningEpoch) {
 				if (returning !== undefined) {
 					Tone.getContext().clearTimeout(returning);
 				}
@@ -461,7 +478,14 @@ export function createToneBackend(): ToneBackend {
 						Tone.getContext().setTimeout(resolve, SESSION_FADE_SECONDS);
 					});
 				}
-				requestPlaybackSession();
+				// Read again after the fade. A suspend or a stop can land inside those
+				// 300 ms, and by then the session belongs to whoever holds the
+				// microphone. The Bed still comes back below either way; only the
+				// session move is skipped, because a voice faded to zero with nothing
+				// scheduled to raise it is silence for the life of the page.
+				if (epoch === listeningEpoch) {
+					requestPlaybackSession();
+				}
 				if (faded !== undefined) {
 					bringBackAfterSwitch(faded);
 				}
@@ -487,6 +511,33 @@ export function createToneBackend(): ToneBackend {
 		// await still has to find tracks to stop, and `stream` is the only thing
 		// stopListening reads to find them.
 		stream = opened;
+		// Attached here for the reason `stream` is set here. A mute can land inside
+		// the module fetch below, and the runtime still has to hear about it. Above
+		// the epoch check would be wrong, because that path stops the tracks and
+		// returns without ever holding them.
+		//
+		// A mute with the page still visible, an incoming call being the usual one,
+		// does not resume itself when the call ends. Principle I is non-negotiable,
+		// so suspending Listening means `track.stop()` rather than
+		// `enabled = false`, and a stopped track is ended, so it will never fire
+		// `unmute` and there is nothing to resume from. Offering the Invitation
+		// again is the deliberate way back.
+		for (const track of opened.getTracks()) {
+			track.addEventListener('mute', handleTrackMute);
+		}
+		// A track can arrive muted, when the interruption that muted it was already
+		// under way as the listener answered the prompt. An incoming call is the
+		// ordinary way in. The event fired before anything was listening for it, or
+		// never fired at all, so waiting for one waits for the life of the page while
+		// the Invitation says Listening over a room it cannot hear.
+		//
+		// Read after attaching rather than before, so a mute landing between the two
+		// is caught by the listener instead of falling through the gap. That can fire
+		// the handler twice, which costs nothing: suspending is idempotent because an
+		// installed app fires mute and visibilitychange for the same suspension.
+		if (opened.getTracks().some(track => track.muted)) {
+			handleTrackMute();
+		}
 		// Awaiting here is safe in a way that awaiting ahead of getUserMedia would not
 		// be. iOS spends the tap's activation on whichever await runs first, which is
 		// why everything above stays synchronous, but nothing past the prompt needs
@@ -572,6 +623,10 @@ export function createToneBackend(): ToneBackend {
 		listeningInput = undefined;
 		levelListening = undefined;
 		for (const track of stream?.getTracks() ?? []) {
+			// Removed before the stop, so a mute the platform fires while releasing the
+			// track cannot read as the platform taking a microphone the app is already
+			// handing back. onMute answers for a track the backend still holds.
+			track.removeEventListener('mute', handleTrackMute);
 			track.stop();
 		}
 		stream = undefined;
@@ -605,5 +660,12 @@ export function createToneBackend(): ToneBackend {
 		};
 	}
 
-	return { resume, start, setParameter, fadeIn, fadeOut, startListening, stopListening, stop, onSignal, probe };
+	function onMute(listener: () => void): () => void {
+		muteListeners.add(listener);
+		return (): void => {
+			muteListeners.delete(listener);
+		};
+	}
+
+	return { resume, start, setParameter, fadeIn, fadeOut, startListening, stopListening, stop, onSignal, onMute, probe };
 }

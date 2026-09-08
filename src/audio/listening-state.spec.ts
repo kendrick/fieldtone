@@ -1,8 +1,8 @@
-import type { Refused } from './listening-state';
+import type { Refused, Suspended } from './listening-state';
 
 import { describe, expect, it } from 'vitest';
 
-import { abandonOpening, beginOpening, completeOpening, dismissRefusal, endListening, notListening, refused } from './listening-state';
+import { abandonOpening, beginOpening, completeOpening, dismissRefusal, dismissSuspension, endListening, notListening, refused, suspendListening } from './listening-state';
 
 describe('listening state transitions', (): void => {
 	it('walks the full round trip from not listening to listening and back', (): void => {
@@ -45,6 +45,26 @@ describe('listening state transitions', (): void => {
 
 		expect(abandonOpening(opening)).toEqual({ status: 'not-listening' });
 	});
+
+	it('suspends an open microphone and reopens it from there', (): void => {
+		const listening = completeOpening(beginOpening(notListening));
+		const suspended = suspendListening(listening);
+		expect(suspended).toEqual({ status: 'suspended' });
+
+		expect(beginOpening(suspended)).toEqual({ status: 'opening' });
+	});
+
+	it('suspends an attempt still out at the prompt', (): void => {
+		const opening = beginOpening(notListening);
+
+		expect(suspendListening(opening)).toEqual({ status: 'suspended' });
+	});
+
+	it('leaves a suspension for a stopped session', (): void => {
+		const suspended: Suspended = { status: 'suspended' };
+
+		expect(dismissSuspension(suspended)).toEqual({ status: 'not-listening' });
+	});
 });
 
 // The ticket requires the four outcomes to come from the state rather than from
@@ -53,12 +73,12 @@ describe('listening state transitions', (): void => {
 // calls below, `pnpm typecheck` fails because the directive becomes unnecessary.
 describe('illegal transitions are compile errors', (): void => {
 	it('rejects a second accept while getUserMedia is still out', (): void => {
-		// @ts-expect-error beginOpening only accepts NotListening | Refused, not Opening.
+		// @ts-expect-error beginOpening only accepts NotListening | Refused | Suspended, not Opening.
 		expect(beginOpening(beginOpening(notListening))).toEqual({ status: 'opening' });
 	});
 
 	it('rejects opening a microphone that is already open', (): void => {
-		// @ts-expect-error beginOpening only accepts NotListening | Refused, not Listening.
+		// @ts-expect-error beginOpening only accepts NotListening | Refused | Suspended, not Listening.
 		expect(beginOpening(completeOpening(beginOpening(notListening)))).toEqual({ status: 'opening' });
 	});
 
@@ -83,5 +103,42 @@ describe('illegal transitions are compile errors', (): void => {
 	it('rejects abandoning a microphone that is already open', (): void => {
 		// @ts-expect-error abandonOpening only accepts Opening, not Listening.
 		expect(abandonOpening(completeOpening(beginOpening(notListening)))).toEqual({ status: 'not-listening' });
+	});
+
+	it('rejects suspending a microphone that was never opened', (): void => {
+		// @ts-expect-error suspendListening only accepts Listening | Opening, not NotListening.
+		expect(suspendListening(notListening)).toEqual({ status: 'suspended' });
+	});
+
+	it('rejects suspending a refusal', (): void => {
+		const busy = refused(beginOpening(notListening), 'busy');
+
+		// @ts-expect-error suspendListening only accepts Listening | Opening, not Refused.
+		expect(suspendListening(busy)).toEqual({ status: 'suspended' });
+	});
+
+	it('rejects dismissing a suspension that was never suspended', (): void => {
+		const listening = completeOpening(beginOpening(notListening));
+
+		// @ts-expect-error dismissSuspension only accepts Suspended, not Listening.
+		expect(dismissSuspension(listening)).toEqual({ status: 'not-listening' });
+	});
+
+	// A suspended session has no open microphone left for `endListening` to
+	// close: `suspendListening` already released it, and treating a suspension
+	// as though it were still `Listening` would double-release a track that
+	// `dismissSuspension` is the edge meant to walk back from.
+	it('rejects stopping a microphone that is only suspended', (): void => {
+		const suspended = suspendListening(completeOpening(beginOpening(notListening)));
+
+		// @ts-expect-error endListening only accepts Listening, not Suspended.
+		expect(endListening(suspended)).toEqual({ status: 'not-listening' });
+	});
+
+	it('rejects completing a suspension as though it were an open attempt', (): void => {
+		const suspended = suspendListening(completeOpening(beginOpening(notListening)));
+
+		// @ts-expect-error completeOpening only accepts Opening, not Suspended.
+		expect(completeOpening(suspended)).toEqual({ status: 'listening' });
 	});
 });

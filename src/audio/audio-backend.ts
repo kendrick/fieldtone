@@ -67,4 +67,26 @@ export interface AudioBackend {
 	// its own listener without needing to keep the original function reference
 	// around to hand back.
 	onSignal: (listener: SignalListener) => () => void;
+	// The other channel that runs upward, and the one the platform opens on its
+	// own. onSignal is Listening telling the runtime a value arrived; onMute is
+	// the platform telling the runtime it took the microphone away.
+	//
+	// An iOS Home Screen web app suspends capture when it goes to the background
+	// and fires `mute` on the track, roughly nine tenths of a second ahead of
+	// visibilitychange (ADR 0004). It also says the microphone went away rather
+	// than that the page did. A Safari tab fires no mute at all and holds the
+	// microphone open for the life of the tab, which is why a visibilitychange
+	// fallback lives in its own module.
+	//
+	// The mute event and `track.muted` are the only observable signal here. A
+	// muted track keeps delivering buffers and those buffers are silent, so an
+	// RMS meter cannot tell a muted track from a quiet room, and `enabled` is
+	// author-only and never changes on its own. WebKit drives the same path from
+	// audio session interruptions, so an incoming call arrives here too and this
+	// is worth listening for whatever backgrounding does.
+	//
+	// Fires only for a track the backend currently holds, and never for the
+	// backend's own stopListening. Returns the unsubscribe for the reason
+	// onSignal does, so there is no separate offMute.
+	onMute: (listener: () => void) => () => void;
 }

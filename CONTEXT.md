@@ -16,6 +16,10 @@ _Avoid_: Interactive, responsive, adaptive
 Reading the microphone, both to derive Control Signals and to catch Material. Listening never records and never stores audio; what it holds is bounded, in memory, and gone when Listening stops.
 _Avoid_: Recording, capturing, sampling
 
+**Suspension**:
+The state Listening is in when the app or the platform closed it rather than the listener. A Suspension zeroes whatever Listening held, the same as when the listener stops it, but keeps their consent, so Listening can resume without asking again.
+_Avoid_: Pause, stop, mute (the platform's event name), disable
+
 **Listening Depth**:
 How far into a sound Listening goes, and what that costs. A deeper depth earns its cost only after the shallower one has run out.
 _Avoid_: Tier, analysis stage, quality setting

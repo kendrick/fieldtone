@@ -1,7 +1,7 @@
 import type { ListeningOutcome, RecordingBackend } from '@/audio/recording-backend';
 
 import type { SceneRuntime } from '@/audio/scene-runtime';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRecordingBackend } from '@/audio/recording-backend';
@@ -195,6 +195,63 @@ describe('listen-invitation', () => {
 
 		expect(message.getAttribute('role')).toBe('status');
 		expect(screen.queryByRole('button', { name: 'Let it listen' })).toBeNull();
+	});
+
+	// The Bed plays on through a suspension and the listener is one press from
+	// where they were, so the Invitation has to stay on screen to say so.
+	it('keeps offering when Listening suspends under a playing Bed', async () => {
+		const { backend, runtime } = await playingRuntime();
+		render(<ListenInvitation runtime={runtime} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+		await screen.findByRole('button', { name: 'Stop listening' });
+
+		// Through the backend's mute channel rather than a store write, so the
+		// assertions below rest on the runtime's own suspend path.
+		act(() => {
+			backend.emitMute();
+		});
+
+		expect(screen.getByRole('button', { name: 'Let it listen' })).toBeDefined();
+		expect(screen.getByRole('status').textContent).toBe('FieldTone stopped listening. Press Let it listen to start again.');
+	});
+
+	// The message promises a press that works, and `suspended` is a state the
+	// runtime could as easily have turned away: a second accept from `opening`
+	// gets exactly that. Nothing before this proved which way `suspended` goes.
+	it('reaches Stop listening again when the listener presses after a suspension', async () => {
+		const { backend, runtime } = await playingRuntime();
+		render(<ListenInvitation runtime={runtime} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+		await screen.findByRole('button', { name: 'Stop listening' });
+		act(() => {
+			backend.emitMute();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+
+		expect(await screen.findByRole('button', { name: 'Stop listening' })).toBeDefined();
+	});
+
+	// Principle II. Nobody pressed anything here—the platform took the
+	// microphone—so the refused-only withdrawal effect above never fires and focus
+	// has to survive on its own. Both branches of the control chain render a
+	// <button> in the same slot, which is what lets React patch the node in place
+	// rather than unmount it out from under the listener.
+	it('keeps focus on the control when Listening suspends', async () => {
+		const { backend, runtime } = await playingRuntime();
+		render(<ListenInvitation runtime={runtime} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Let it listen' }));
+		const stopButton = await screen.findByRole('button', { name: 'Stop listening' });
+		stopButton.focus();
+
+		act(() => {
+			backend.emitMute();
+		});
+
+		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Let it listen' }));
 	});
 
 	// The region has to exist before it has anything to say. A live region
