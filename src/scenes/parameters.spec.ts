@@ -84,7 +84,9 @@ describe('resolveParameterValue', (): void => {
 
 describe('resolveStep', (): void => {
 	it('hands back a declared step untouched', (): void => {
-		expect(resolveStep({ kind: 'number', label: 'Space', min: 0, max: 0.8, step: 0.05, default: 0.35 })).toBe(0.05);
+		expect(resolveStep({ kind: 'number', label: 'Space', min: 0, max: 0.8, step: 0.005, default: 0.35 })).toBe(
+			0.005,
+		);
 	});
 
 	// Most declarations say nothing about a step, so the fallback is the step
@@ -125,7 +127,7 @@ describe('resolveStep', (): void => {
 
 	it('rejects a default that does not land on the grid', (): void => {
 		expect((): number =>
-			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 1, step: 0.05, default: 0.023 }),
+			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 1, step: 0.01, default: 0.023 }),
 		).toThrow(/default/);
 	});
 
@@ -145,7 +147,44 @@ describe('resolveStep', (): void => {
 
 	it('throws a RangeError, the same failure Tone raises for an out-of-range parameter', (): void => {
 		expect((): number =>
-			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 1, step: 0.05, default: 0.023 }),
+			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 1, step: 0.01, default: 0.023 }),
 		).toThrow(RangeError);
+	});
+
+	it('rejects a step that leaves too few positions for a keyboard to be worth reaching for', (): void => {
+		expect((): number =>
+			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 4, step: 1, default: 0 }),
+		).toThrow(RangeError);
+	});
+
+	it('rejects a step that leaves more positions than a keyboard needs to cross the range', (): void => {
+		expect((): number =>
+			resolveStep({ kind: 'number', label: 'Brightness', min: 0, max: 600, step: 1, default: 0 }),
+		).toThrow(RangeError);
+	});
+
+	it('names the parameter, the position count and both bounds in the position message', (): void => {
+		expect((): number =>
+			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 4, step: 1, default: 0 }),
+		).toThrow('Space declares a step of 1, which leaves 4 positions across its range. A slider needs between 50 and 500.');
+	});
+
+	// The finite-and-positive guard has to run first: dividing by a zero step
+	// yields Infinity, which is also out of band, so a step of 0 would report as
+	// a position count instead of the invalid step it actually is if the checks
+	// ran in the other order.
+	it('reports a zero step as invalid rather than as a position count', (): void => {
+		expect((): number =>
+			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 0.8, step: 0, default: 0.35 }),
+		).toThrow('Space declares a step of 0, which has to be a finite number greater than zero.');
+	});
+
+	// A fixture that is both out of band and off its own grid reports the band,
+	// because fixing the grid on a step nobody could use would only surface the
+	// band on the next run.
+	it('reports the band before the grid when a step is both', (): void => {
+		expect((): number =>
+			resolveStep({ kind: 'number', label: 'Space', min: 0, max: 4, step: 3, default: 1 }),
+		).toThrow(/positions/);
 	});
 });
