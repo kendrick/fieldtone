@@ -43,7 +43,8 @@ import {
 // evaluation, not at construction.
 
 // The render quantum, fixed by the Web Audio spec. Posting loudness every 16
-// blocks is 2048 frames, about 43 ms at 48 kHz, so roughly 22 readings a second.
+// blocks is 2048 frames, which is 43 ms and 23 readings a second at 48 kHz, and
+// 46 ms and 22 readings at 44.1. An iPhone 15 Pro on iOS 26.6.1 reports 48 kHz.
 // Fast enough that brightness tracks a room by ear, slow enough that the main
 // thread is not fielding a message per 2.7 ms alongside Tone's scheduling.
 const RENDER_QUANTUM_FRAMES = 128;
