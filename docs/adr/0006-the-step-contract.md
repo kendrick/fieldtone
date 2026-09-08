@@ -14,7 +14,9 @@ The error is bounded at half a step, which is 0.005 on both of Ember's parameter
 
 Ticket #36 measured three ways to make the slider tell the whole truth. Each costs more than the rounding does.
 
-Fitting the grid to the values needs a step of `0.0005`, which is what preserving every value Ember could previously produce costs. That is 1600 arrow presses to cross Space and 4500 to cross Brightness, which fails Principle II's keyboard requirement far worse than a rounded display fails anything.
+Fitting each parameter's grid to the values it used to produce is cheaper than it looks and still not worth it. The old step was a hundredth of the range, computed per parameter, so Space moved in 0.008 and Brightness in 0.0225. The coarsest step that keeps those increments and the default on one grid is 0.002 for Space and 0.0025 for Brightness, which leaves 400 positions and 900. That is five times the presses to cross Space and four times to cross Brightness, bought to let the slider display values the store already keeps exactly.
+
+Ticket #56 records this alternative as a single 0.0005 grid costing 1600 presses and 4500. That is the price of holding both parameters to one step, and nothing asks for it, because each parameter declares its own.
 
 Dropping the grid with `step="any"` displays any value and breaks the keyboard in the other direction. Measured on Firefox, one arrow press moves Brightness a full 1.0 of its 2.25 range and Space 0.45 of its 0.8. Chromium and WebKit scale their increment with the range, so the failure is not even consistent across engines.
 
