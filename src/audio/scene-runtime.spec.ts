@@ -3,9 +3,10 @@ import type { PlaybackState } from './playback-state';
 import type { ControlSignalDeclaration } from '@/scenes/control-signals';
 import type { Scene } from '@/scenes/scene';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createSilentScene } from '@/scenes/silent-scene';
+import { createFakeVisibility } from './fake-visibility';
 import { createRecordingBackend } from './recording-backend';
 import { createSceneRuntime, FADE_IN_SECONDS, FADE_OUT_SECONDS } from './scene-runtime';
 
@@ -979,5 +980,377 @@ describe('scene runtime listening', (): void => {
 		// can take: the Invitation reads Listening over a released track.
 		expect(backend.commands.slice(settled)).toEqual([]);
 		expect(runtime.store.getState().listening.status).toBe('listening');
+	});
+});
+
+// Backgrounding, from the runtime's side. ADR 0004 settled the posture: the Bed
+// plays on, Listening does not, and the app suspends it itself rather than
+// waiting to be told—an installed iOS app suspends capture and fires `mute`, a
+// Safari tab fires nothing and holds the microphone for the life of the tab.
+// Every case here is a race, because the two triggers and the grant they can
+// land beside all arrive on schedules nothing here controls.
+describe('scene runtime listening suspension', (): void => {
+	it('releases the microphone when the page goes away, and leaves the bed playing', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		visibility.hide();
+
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'suspended' });
+		// The half of the posture that is easy to lose: suspending Listening is not
+		// stopping the app, and a listener who backgrounds FieldTone to answer a
+		// message comes back to the Bed they left playing.
+		expect(runtime.getState()).toEqual({ status: 'playing' });
+	});
+
+	it('does nothing when the page goes away with no microphone open', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		visibility.hide();
+
+		expect(backend.commands.slice(3)).toEqual([]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+	});
+
+	// The prompt outlives the page. A listener taps accept, switches apps with the
+	// browser's dialog still up, and answers it later—and the backend holds the
+	// stream from the moment the grant lands, so the suspension has a real track to
+	// release rather than a promise to let run.
+	it('suspends an accept still at the prompt, then turns its grant away', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		let grantMicrophone: () => void = (): void => {};
+		const prompt = new Promise<void>((resolve): void => {
+			grantMicrophone = resolve;
+		});
+		// Through the recorder rather than around it: the wrapper still logs the
+		// command, and the promise the runtime awaits is this test's to settle.
+		const runtime = createSceneRuntime({
+			...backend,
+			startListening: async (): Promise<void> => {
+				await backend.startListening();
+				return prompt;
+			},
+		}, silentScene, visibility);
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		visibility.hide();
+
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'suspended' });
+
+		grantMicrophone();
+
+		// `stopped-listening` rather than an orphan reason: the session never ended,
+		// only the page's claim on the microphone did. The second close is the
+		// attempt handing back what the browser gave it after the suspension had
+		// already moved the store on.
+		expect(await accepting).toEqual({ ok: false, reason: 'stopped-listening' });
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'stopListening' },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'suspended' });
+	});
+
+	it('opens the microphone again when the page comes back', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		visibility.hide();
+		visibility.show();
+
+		// The resume leaves a synchronous event handler with nobody holding its
+		// promise, so this waits on the store rather than awaiting a call.
+		await vi.waitFor((): void => {
+			expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+		});
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'startListening' },
+		]);
+	});
+
+	// Stop pressed on a backgrounded app, which is what a listener does from the
+	// lock screen. There is nothing left to close, so closing again would log a
+	// release nobody performed and read as a second microphone in the command list.
+	it('stops without closing a microphone the suspension already released', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		visibility.hide();
+		const suspended = backend.commands.length;
+
+		const result = runtime.stop();
+
+		expect(result).toEqual({ ok: true });
+		expect(backend.commands.slice(suspended)).toEqual([
+			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
+			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+		expect(runtime.getState()).toEqual({ status: 'idle' });
+	});
+
+	// The return trip from the case above. Coming back must not resurrect a
+	// microphone for a Bed that is no longer playing: the not-playing guard would
+	// turn the attempt away, but only after the browser had already been asked.
+	it('leaves a stopped bed alone when the page comes back', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		visibility.hide();
+		runtime.stop();
+		const stopped = backend.commands.length;
+
+		visibility.show();
+		// One turn of the microtask queue, which is all a resume would need to reach
+		// the backend and land in the log.
+		await Promise.resolve();
+
+		expect(backend.commands.slice(stopped)).toEqual([]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+	});
+
+	// An app switched to and away from repeatedly, which is the ordinary way a
+	// phone gets used. Each round trip has to close and reopen exactly once: a
+	// suspension that forgot to release, or a resume that fired twice, both show up
+	// here as a tail of the wrong length.
+	it('closes and reopens once per round trip, however many there are', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+
+		for (let cycle = 0; cycle < 3; cycle += 1) {
+			visibility.hide();
+			visibility.show();
+			await vi.waitFor((): void => {
+				expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+			});
+		}
+
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'startListening' },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+	});
+
+	// The installed app's measured sequence: `mute` on the track, then
+	// visibilitychange roughly nine tenths of a second behind it. Both are true and
+	// both arrive, so the second one has to be free.
+	it('costs nothing when mute and the page event both say the same thing', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitMute();
+		visibility.hide();
+
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'suspended' });
+	});
+
+	// Suspended by the track, resumed by the page. The two signals are asymmetric
+	// on purpose: nothing tells the runtime a microphone came back, so the visible
+	// edge is the only way out of `suspended`.
+	it('reopens a microphone the platform muted once the page comes back', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitMute();
+		visibility.show();
+
+		await vi.waitFor((): void => {
+			expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+		});
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'startListening' },
+		]);
+	});
+
+	// WebKit drives the same mute path from audio session interruptions, so an
+	// incoming call arrives here with nothing open. There is nothing to release
+	// and nothing to remember.
+	it('ignores a mute that arrives with no microphone open', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		backend.emitMute();
+
+		expect(backend.commands.slice(3)).toEqual([]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+	});
+
+	// Coming back is a fresh press, and a fresh press can be turned down. Another
+	// app took the microphone while FieldTone was in the background, and the
+	// listener gets the refusal they would have gotten by pressing the button
+	// themselves—which is the state the Invitation already knows how to explain.
+	it('records a refusal when the resume is turned down', async (): Promise<void> => {
+		const backend = createRecordingBackend({ listening: ['succeed', 'busy'] });
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		visibility.hide();
+		visibility.show();
+
+		await vi.waitFor((): void => {
+			expect(runtime.store.getState().listening).toEqual({ status: 'refused', reason: 'busy' });
+		});
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'startListening' },
+		]);
+	});
+
+	// WebKit bug 207256: a visibilitychange can arrive late, on resume, reading
+	// `visible` for a page that already went away and came back. Acting on the
+	// event's arrival rather than on what the port says would suspend a session
+	// nothing had backgrounded.
+	it('reads the port rather than the event when a late one arrives visible', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		visibility.notify();
+
+		expect(backend.commands.slice(3)).toEqual([{ kind: 'startListening' }]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+	});
+
+	// The other half of that race, and the one no event can close: WebKit may
+	// suspend the process before visibilitychange gets out, so the page can be
+	// hidden with nothing ever having fired. The grant lands into a page nobody
+	// told the runtime about, which is why the accept path asks the port on its way
+	// out instead of trusting that an edge would have arrived.
+	it('suspends a grant that completes into a page already hidden', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		let grantMicrophone: () => void = (): void => {};
+		const prompt = new Promise<void>((resolve): void => {
+			grantMicrophone = resolve;
+		});
+		const runtime = createSceneRuntime({
+			...backend,
+			startListening: async (): Promise<void> => {
+				await backend.startListening();
+				return prompt;
+			},
+		}, silentScene, visibility);
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		// No event: this is the hide that never got out.
+		visibility.setHidden(true);
+		grantMicrophone();
+
+		// `ok`, because the browser did say yes; the suspension is a separate event
+		// about the microphone.
+		expect(await accepting).toEqual({ ok: true });
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'suspended' });
+	});
+
+	// A listener who comes back and presses the button before the resume has
+	// fired—or on a surface where nothing fires. `suspended` is a starting point
+	// for `beginOpening` for exactly this: asking again is what the press means.
+	it('accepts a press that lands while listening is suspended', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitMute();
+
+		const result = await runtime.startListening();
+
+		expect(result).toEqual({ ok: true });
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+			{ kind: 'startListening' },
+		]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+	});
+
+	// Stop listening, pressed on a suspended session. It closes nothing, because
+	// the suspension already did. What it does is call off the resume: the
+	// listener says don't ask again, and the visible edge on the way back finds
+	// nothing to resume.
+	it('lets the listener call off a resume before the page comes back', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitMute();
+		const suspended = backend.commands.length;
+
+		const result = runtime.stopListening();
+
+		expect(result).toEqual({ ok: true });
+		expect(backend.commands.slice(suspended)).toEqual([]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
+
+		visibility.show();
+		await Promise.resolve();
+
+		expect(backend.commands.slice(suspended)).toEqual([]);
+		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
 	});
 });
