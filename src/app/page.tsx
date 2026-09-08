@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 
+import { BackgroundListening } from '@/components/background-listening';
 import { ListenInvitation } from '@/components/listen-invitation';
 import { ParameterControls } from '@/components/parameter-controls';
 import { PlayToggle } from '@/components/play-toggle';
@@ -13,6 +14,7 @@ export default function HomePage(): ReactElement {
 			<ParameterControls />
 			<ShareControl />
 			<ListenInvitation />
+			<BackgroundListening />
 		</main>
 	);
 }
