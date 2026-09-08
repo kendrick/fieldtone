@@ -124,7 +124,16 @@ export function resolveStep(declaration: NumberParameter): number {
 	// grid checks, a step that is both off-grid and out of band would report
 	// the grid, and fixing the grid on a step nobody could use would only
 	// surface the band on the next run.
-	const positions = (declaration.max - declaration.min) / step;
+	//
+	// Rounded for the same reason GRID_TOLERANCE exists a few lines up: this
+	// division is no more reliable than that one. A Space of 0.1 to 0.4 on a
+	// 0.0006 step divides its range exactly 500 ways and comes out
+	// 500.0000000000001, which a bare comparison rejects as over the ceiling.
+	// Rounding rather than a second tolerance constant, because the band is a
+	// count of whole positions: any declaration that survives the grid checks
+	// below has an integer count by construction, and one that does not is
+	// about to be rejected for the grid anyway.
+	const positions = Math.round((declaration.max - declaration.min) / step);
 
 	if (positions < MINIMUM_POSITIONS || positions > MAXIMUM_POSITIONS) {
 		throw new RangeError(

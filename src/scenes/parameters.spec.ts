@@ -179,6 +179,17 @@ describe('resolveStep', (): void => {
 		).toThrow('Space declares a step of 0, which has to be a finite number greater than zero.');
 	});
 
+	// The division is no more reliable here than it is for the grid check below,
+	// which is what GRID_TOLERANCE exists for: 0.3 / 0.0006 comes out
+	// 500.0000000000001. A declaration that divides its range exactly 500 ways
+	// is inside the band ADR 0006 sets, so a bare `>` comparison would reject a
+	// Scene the contract permits.
+	it('accepts a step that divides the range exactly at the ceiling', (): void => {
+		expect(
+			resolveStep({ kind: 'number', label: 'Space', min: 0.1, max: 0.4, step: 0.0006, default: 0.1 }),
+		).toBe(0.0006);
+	});
+
 	// A fixture that is both out of band and off its own grid reports the band,
 	// because fixing the grid on a step nobody could use would only surface the
 	// band on the next run.
