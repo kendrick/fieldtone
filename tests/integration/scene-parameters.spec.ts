@@ -41,4 +41,37 @@ test.describe('scene parameters', () => {
 
 		await expect.poll(() => page.evaluate(readLevel), { timeout: 5_000 }).toBeGreaterThan(AUDIBLE_THRESHOLD);
 	});
+
+	test('Space and Brightness sliders sit exactly on their step grid', async ({ page }): Promise<void> => {
+		await page.goto('./');
+
+		// 0.01 divides both of Ember's ranges evenly (see the DEFAULT_STEP comment
+		// in parameters.ts), so valueAsNumber lands on the same number the store
+		// holds with no rounding gap to paper over—#36 was a slider showing 0.352
+		// for a store value of 0.35, and this is the regression guard for it.
+		const space = page.getByRole('slider', { name: 'Space' });
+		const brightness = page.getByRole('slider', { name: 'Brightness' });
+		await expect(space).toHaveJSProperty('valueAsNumber', 0.35);
+		await expect(brightness).toHaveJSProperty('valueAsNumber', 1);
+
+		// One key at a time off the default, checked before the next moves it
+		// again: ArrowRight proves the grid itself is 0.01 wide rather than some
+		// other divisor that happens to land on the same default, and Home/End
+		// are the schema's own min and max.
+		await space.focus();
+		await space.press('ArrowRight');
+		await expect(space).toHaveJSProperty('valueAsNumber', 0.36);
+		await space.press('Home');
+		await expect(space).toHaveJSProperty('valueAsNumber', 0);
+		await space.press('End');
+		await expect(space).toHaveJSProperty('valueAsNumber', 0.8);
+
+		await brightness.focus();
+		await brightness.press('ArrowRight');
+		await expect(brightness).toHaveJSProperty('valueAsNumber', 1.01);
+		await brightness.press('Home');
+		await expect(brightness).toHaveJSProperty('valueAsNumber', 0.75);
+		await brightness.press('End');
+		await expect(brightness).toHaveJSProperty('valueAsNumber', 3);
+	});
 });

@@ -11,6 +11,7 @@ import { useStore } from 'zustand';
 
 import { sceneRuntime } from '@/audio/runtime';
 import { cn } from '@/lib/utils';
+import { resolveStep } from '@/scenes/parameters';
 
 interface ParameterControlsProps {
 	runtime?: SceneRuntime;
@@ -49,7 +50,15 @@ function ParameterSlider({ runtime, name, declaration }: ParameterSliderProps): 
 				type="range"
 				min={declaration.min}
 				max={declaration.max}
-				step={(declaration.max - declaration.min) / 100}
+				// (max - min) / 100 divides neither Ember default evenly, so the
+				// widget showed 0.352 for a Space the store held at 0.35 (#36).
+				// step="any" fixes the display and breaks the keyboard. Measured on
+				// Firefox, one arrow press moves Brightness a full 1.0 of its 2.25
+				// range and Space 0.45 of its 0.8, about two usable positions either
+				// way; Chromium and WebKit scale with the range instead. Principle II
+				// rules that out. resolveStep reads the grid the schema itself
+				// declares, and throws before render if a bound doesn't land on it.
+				step={resolveStep(declaration)}
 				value={value}
 				onChange={handleChange}
 				className={cn(

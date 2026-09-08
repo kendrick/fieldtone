@@ -118,79 +118,90 @@ test.describe('listen invitation', () => {
 		expect(await page.evaluate(renderBedRms)).toBeGreaterThan(AUDIBLE_THRESHOLD);
 	});
 
-	test('hands the microphone back when the worklet module never arrives', async ({ page }): Promise<void> => {
-		await page.addInitScript((key: string) => {
-			window.localStorage.setItem(key, 'offered');
-		}, OFFERED_KEY);
+	// Service worker off for both of these. #50's worker proxies every same-origin
+	// GET, and page.route never sees a request the worker made rather than the page,
+	// so the abort and the hang below both land nowhere: the module loads, Listening
+	// starts, and one test fails while its twin passes having stalled nothing.
+	// Blocking the worker puts the request back on the wire where the route can reach
+	// it. What is under test is unchanged either way, because a module that never
+	// arrives rejects addModule wherever the request was made.
+	test.describe('with the worklet module unreachable', () => {
+		test.use({ serviceWorkers: 'block' });
 
-		// Every track getUserMedia hands out, kept where the assertion can reach it.
-		// The backend holds the stream in a closure and the probe deliberately does
-		// not expose it, so a page has no other way to ask whether the microphone
-		// was actually released rather than merely reported as failed.
-		await page.addInitScript(() => {
-			const granted: MediaStreamTrack[] = [];
-			window.__grantedTracks = granted;
-			const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-			navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
-				const stream = await open(constraints);
-				granted.push(...stream.getTracks());
-				return stream;
-			};
+		test('hands the microphone back when the worklet module never arrives', async ({ page }): Promise<void> => {
+			await page.addInitScript((key: string) => {
+				window.localStorage.setItem(key, 'offered');
+			}, OFFERED_KEY);
+
+			// Every track getUserMedia hands out, kept where the assertion can reach it.
+			// The backend holds the stream in a closure and the probe deliberately does
+			// not expose it, so a page has no other way to ask whether the microphone
+			// was actually released rather than merely reported as failed.
+			await page.addInitScript(() => {
+				const granted: MediaStreamTrack[] = [];
+				window.__grantedTracks = granted;
+				const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+				navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
+					const stream = await open(constraints);
+					granted.push(...stream.getTracks());
+					return stream;
+				};
+			});
+
+			// A deploy that shipped the page without the worklet, or a network that drops
+			// the request. Either way the grant has already happened by the time the load
+			// fails, which is the case Principle I turns on.
+			await page.route('**/worklets/level-listening.js', route => route.abort());
+			await page.goto('./');
+
+			await page.getByRole('button', { name: 'Play' }).click();
+			await page.getByRole('button', { name: 'Let it listen' }).click();
+
+			await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
+				'This browser cannot open a microphone.',
+			);
+
+			// The message is the easy half. Nothing captured may outlive the session that
+			// captured it, so a failure after the grant still has to stop the track. Left
+			// running it lights the recording indicator underneath a message saying the
+			// microphone never opened, and no later press releases it: the runtime reaches
+			// `refused`, where its own stopListening guard returns before the backend.
+			await expect
+				.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
+				.toBe(true);
 		});
 
-		// A deploy that shipped the page without the worklet, or a network that drops
-		// the request. Either way the grant has already happened by the time the load
-		// fails, which is the case Principle I turns on.
-		await page.route('**/worklets/level-listening.js', route => route.abort());
-		await page.goto('./');
+		// The stalled twin of the case above. A request that hangs rather than fails
+		// never reaches the catch in tone-backend.ts, so the microphone is released
+		// here by Stop reaching the backend during `opening` instead.
+		test('hands the microphone back when the module load never settles', async ({ page }): Promise<void> => {
+			await page.addInitScript((key: string) => {
+				window.localStorage.setItem(key, 'offered');
+			}, OFFERED_KEY);
+			await page.addInitScript(() => {
+				const granted: MediaStreamTrack[] = [];
+				window.__grantedTracks = granted;
+				const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+				navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
+					const stream = await open(constraints);
+					granted.push(...stream.getTracks());
+					return stream;
+				};
+			});
+			// Never fulfilled, never aborted. The request simply hangs.
+			await page.route('**/worklets/level-listening.js', () => {});
+			await page.goto('./');
 
-		await page.getByRole('button', { name: 'Play' }).click();
-		await page.getByRole('button', { name: 'Let it listen' }).click();
+			await page.getByRole('button', { name: 'Play' }).click();
+			await page.getByRole('button', { name: 'Let it listen' }).click();
+			await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
+				'Asking your browser for the microphone.',
+			);
+			await page.getByRole('button', { name: 'Stop' }).click();
 
-		await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
-			'This browser cannot open a microphone.',
-		);
-
-		// The message is the easy half. Nothing captured may outlive the session that
-		// captured it, so a failure after the grant still has to stop the track. Left
-		// running it lights the recording indicator underneath a message saying the
-		// microphone never opened, and no later press releases it: the runtime reaches
-		// `refused`, where its own stopListening guard returns before the backend.
-		await expect
-			.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
-			.toBe(true);
-	});
-
-	// The stalled twin of the case above. A request that hangs rather than fails
-	// never reaches the catch in tone-backend.ts, so the microphone is released
-	// here by Stop reaching the backend during `opening` instead.
-	test('hands the microphone back when the module load never settles', async ({ page }): Promise<void> => {
-		await page.addInitScript((key: string) => {
-			window.localStorage.setItem(key, 'offered');
-		}, OFFERED_KEY);
-		await page.addInitScript(() => {
-			const granted: MediaStreamTrack[] = [];
-			window.__grantedTracks = granted;
-			const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-			navigator.mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints): Promise<MediaStream> => {
-				const stream = await open(constraints);
-				granted.push(...stream.getTracks());
-				return stream;
-			};
+			await expect
+				.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
+				.toBe(true);
 		});
-		// Never fulfilled, never aborted. The request simply hangs.
-		await page.route('**/worklets/level-listening.js', () => {});
-		await page.goto('./');
-
-		await page.getByRole('button', { name: 'Play' }).click();
-		await page.getByRole('button', { name: 'Let it listen' }).click();
-		await expect(page.locator('.invitation-floor').getByRole('status')).toHaveText(
-			'Asking your browser for the microphone.',
-		);
-		await page.getByRole('button', { name: 'Stop' }).click();
-
-		await expect
-			.poll(() => page.evaluate(() => window.__grantedTracks?.every(track => track.readyState === 'ended') ?? false))
-			.toBe(true);
 	});
 });

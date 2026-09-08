@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactElement, ReactNode } from 'react';
 
+import { ServiceWorkerRegistration } from '@/components/service-worker-registration';
+
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -36,6 +38,7 @@ export default function RootLayout({ children }: RootLayoutProps): ReactElement 
 			{/* text-base is pinned here per the constitution's 16px minimum body text requirement */}
 			<body className="min-h-dvh bg-background text-base text-foreground antialiased">
 				{children}
+				<ServiceWorkerRegistration />
 			</body>
 		</html>
 	);

@@ -37,6 +37,17 @@ describe('parameter-controls', () => {
 		expect(screen.getByRole('slider', { name: 'Brightness' })).toBeDefined();
 	});
 
+	// #36: a step of (max - min) / 100 leaves Ember's own defaults off their
+	// grid, so the widget showed 0.352 for a Space the store held at 0.35. The
+	// schema's declared step is what the rendered input has to carry.
+	it('sets the declared step on the rendered Space and Brightness sliders', () => {
+		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
+		render(<ParameterControls runtime={runtime} />);
+
+		expect(screen.getByRole('slider', { name: 'Space' }).getAttribute('step')).toBe('0.01');
+		expect(screen.getByRole('slider', { name: 'Brightness' }).getAttribute('step')).toBe('0.01');
+	});
+
 	it('reaches the store when a slider changes', () => {
 		const runtime = createSceneRuntime(createRecordingBackend(), createSilentScene('silent', emberParameters));
 		render(<ParameterControls runtime={runtime} />);
