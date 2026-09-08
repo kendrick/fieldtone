@@ -261,14 +261,32 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 				// the microphone and moved the store on. Identity rather than status,
 				// because a listener who stopped and accepted again is in `opening` too
 				// and that one is not ours to finish.
-				const abandoned = store.getState().listening !== opening;
+				// One read, because `superseded` below asks a second question about the
+				// same snapshot and two reads could straddle a press.
+				const current = store.getState().listening;
+				const abandoned = current !== opening;
+
+				// Whether a newer attempt has claimed the backend. The backend holds one
+				// microphone, and from the moment a second attempt reaches `opening` that
+				// microphone is the newer one's to close rather than this one's. Releasing
+				// it here would take down a session the store still reports as open, which
+				// is the worst shape this race has: the Invitation reads Listening over a
+				// track that is already gone.
+				//
+				// Nothing is leaked by standing down. An abandoned attempt has no stream
+				// of its own left by this point, because stop() and stopListening() both
+				// bump the backend's epoch before this resolves and the adapter turns its
+				// own late grant away on that.
+				const superseded = abandoned && (current.status === 'opening' || current.status === 'listening');
 
 				if (orphaned !== undefined) {
 					// Called on the refused path too, not just the granted one. The seam
 					// documents it as a no-op when no microphone is open, so the cost is
 					// nothing and one exit from a race is easier to trust than two that
 					// differ only where the difference cannot be observed.
-					backend.stopListening();
+					if (!superseded) {
+						backend.stopListening();
+					}
 					if (!abandoned) {
 						store.setState({ listening: abandonOpening(opening) });
 					}
@@ -289,7 +307,9 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene): SceneRu
 				// kept playing. The orphan checks above miss it because the session never
 				// ended, so this is the only place left to hand the microphone back.
 				if (abandoned) {
-					backend.stopListening();
+					if (!superseded) {
+						backend.stopListening();
+					}
 					return { ok: false, reason: 'stopped-listening' };
 				}
 

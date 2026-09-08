@@ -941,4 +941,43 @@ describe('scene runtime listening', (): void => {
 		expect(runtime.getState()).toEqual({ status: 'playing' });
 		expect(backend.commands.at(-1)).toEqual({ kind: 'stopListening' });
 	});
+
+	// The backend holds one microphone, so an attempt that lost the listening state
+	// is not free to close it. A listener who stops and accepts again leaves the
+	// first attempt still out at the prompt, and when it finally answers the stream
+	// the backend holds belongs to the second one.
+	//
+	// The first attempt has nothing of its own left to release by then: both stop()
+	// and stopListening() bump the backend's epoch before this resolves, so the
+	// adapter already turned its own grant away.
+	it('leaves the current microphone alone when an abandoned attempt finally answers', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const prompts: Array<() => void> = [];
+		const runtime = createSceneRuntime({
+			...backend,
+			startListening: (): Promise<void> => new Promise<void>((resolve): void => {
+				prompts.push(resolve);
+			}),
+		}, silentScene);
+
+		await runtime.start();
+		const abandoned = runtime.startListening();
+		runtime.stopListening();
+		const current = runtime.startListening();
+
+		// The second attempt answers first and takes the microphone.
+		prompts[1]?.();
+		expect(await current).toEqual({ ok: true });
+		expect(runtime.store.getState().listening.status).toBe('listening');
+
+		const settled = backend.commands.length;
+		prompts[0]?.();
+
+		expect(await abandoned).toEqual({ ok: false, reason: 'stopped-listening' });
+		// Nothing after the second attempt settled. A stopListening here would close
+		// a microphone the store still reports as open, which is the worst shape this
+		// can take: the Invitation reads Listening over a released track.
+		expect(backend.commands.slice(settled)).toEqual([]);
+		expect(runtime.store.getState().listening.status).toBe('listening');
+	});
 });
