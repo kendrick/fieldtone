@@ -40,8 +40,12 @@ const SESSION_FADE_SECONDS = 0.3;
 // and this wants to go back up.
 //
 // Shorter than ADR 0004, which puts the switch's silence at roughly half a second
-// to a second. That range was measured once and this contradicts it, so treat the
-// ADR's figure as the weaker of the two until someone re-measures it.
+// to a second. Not a contradiction. That figure is the one measurement in the ADR
+// with no device or OS written beside it, and the ADR's other numbers were taken
+// on iOS 18.7, so it most likely describes a platform two majors older than this
+// tuning. Principle VI still requires iOS 18, and a dropout at the top of that
+// range would outlast this wait and the whole ramp after it, putting the Bed back
+// at full level. Unmeasured there; #61 is the ticket that settles it.
 const SESSION_SWITCH_DROPOUT_SECONDS = 0.25;
 // Long enough for the stop to have taken effect before the nodes go away:
 // disposing a node mid-release cuts the tail the Bed just scheduled.
