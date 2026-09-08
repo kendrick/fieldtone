@@ -11,10 +11,10 @@
 // `document` exists.
 //
 // This port carries no Listening policy of its own — it only answers "is the
-// page hidden." A future ticket (#17) offers an opt-in for background
-// Listening in a Safari tab, and composes it by injecting a PageVisibility
-// whose isHidden always reports false; the runtime that consumes this port
-// never learns that opt-in exists.
+// page hidden." background-listening.ts's keepListeningVisibility composes
+// the opt-in for background Listening in a Safari tab on top of this port,
+// wrapping isHidden to report false while the opt-in applies; the runtime
+// that consumes this port never learns that opt-in exists.
 export interface PageVisibility {
 	isHidden: () => boolean;
 	subscribe: (listener: () => void) => () => void;
