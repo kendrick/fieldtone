@@ -71,11 +71,16 @@ export function writeKeepListening(on: boolean): void {
 	}
 }
 
-// Reads localStorage on every isHidden() call rather than caching the toggle
-// at construction, the same no-cache rule createDocumentVisibility already
-// follows: isHidden fires on a rare event, so the synchronous read costs
-// nothing, no cache can drift from the control the listener just flipped, and
-// storage that throws still reads back as `false` on the very next call.
+// Read per call rather than captured at construction, the same no-cache rule
+// createDocumentVisibility already follows: isHidden fires on a rare event, so
+// the read costs nothing, and nothing here can drift from the control the
+// listener just flipped.
+//
+// What it reads is the session choice wherever the listener has made one, and
+// storage only before that; readKeepListening decides which, and the two part
+// company exactly when a write was refused. So a refused enable holds for this
+// session rather than reading back as off, and a refused disable takes effect
+// rather than leaving the microphone answering to the old value.
 //
 // The opt-in is honored only where the platform can honor it. An installed
 // iOS app suspends capture itself the moment it backgrounds (ADR 0004)

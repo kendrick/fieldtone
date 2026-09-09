@@ -94,7 +94,11 @@ export function BackgroundListening({ runtime = sceneRuntime }: BackgroundListen
 	}
 
 	if (installed) {
-		return <p className="max-w-sm text-center text-sm">{UNAVAILABLE}</p>;
+		// No size class, so this inherits the 16px layout.tsx pins for Principle
+		// II, which is non-negotiable. The checkbox label below may follow the
+		// text-sm precedent listen-invitation.tsx set for control labels; this
+		// carries a sentence, and it is the only thing an installed app gets.
+		return <p className="max-w-sm text-center">{UNAVAILABLE}</p>;
 	}
 
 	return (

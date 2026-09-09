@@ -196,6 +196,17 @@ test.describe('background listening', () => {
 		await expect(page.getByRole('checkbox', { name: LABEL })).toBeHidden();
 		await expect(page.getByText(UNAVAILABLE_MESSAGE)).toBeVisible();
 
+		// Principle II is non-negotiable about a 16px floor for body text, and
+		// nothing else in the suite holds anyone to it: the axe scan cannot, since
+		// WCAG sets no absolute minimum. This sentence is the whole of what an
+		// installed app is told, so it is worth the one assertion. Computed rather
+		// than asserted on a class name, which would pass just as happily over a
+		// size some other rule had overridden.
+		const explanationPx = await page.getByText(UNAVAILABLE_MESSAGE)
+			.evaluate((node: Element) => Number.parseFloat(getComputedStyle(node).fontSize));
+
+		expect(explanationPx).toBeGreaterThanOrEqual(16);
+
 		await page.evaluate(() => {
 			window.__setHidden?.(true);
 		});
