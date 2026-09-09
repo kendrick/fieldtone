@@ -1354,3 +1354,257 @@ describe('scene runtime listening suspension', (): void => {
 		expect(runtime.store.getState().listening).toEqual({ status: 'not-listening' });
 	});
 });
+
+// ADR 0004 rests a Scene at its declared signal defaults whenever input is
+// absent, and the two ways input goes away are both here: the page takes the
+// microphone, or the listener hands it back. Suspension stops the track and
+// tears the worklet down, so nothing posts again and a Control Signal freezes on
+// whatever the room last handed it. On Ember a quiet room reads about -59 dBFS
+// and a cough about -35, which is brightness 1.01 against 1.84—so a listener who
+// coughs, switches apps and comes back finds a bright Bed and no control that
+// explains it.
+describe('scene runtime control signals at rest', (): void => {
+	// The modulation suite's scene, for the same reason: the signal rests at 0 and
+	// reaches half the parameter's range, so a reading of 1 lands level on 1.0 and
+	// the rest brings it back to 0.5. Both exact in binary, so nothing below can
+	// fail on float noise instead of on behavior.
+	function createModulatedScene(): Scene {
+		return createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			{ loudness: { parameter: 'level', default: 0, reach: 0.5 } },
+		);
+	}
+
+	// Backgrounding the app with the room still loud. The microphone closes, so
+	// nothing will post a lower reading, and the settle is what brings the Bed back
+	// down.
+	it('rests a raised signal when the page takes the microphone away', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, createModulatedScene(), visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitSignal('loudness', 1);
+		visibility.hide();
+
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0 });
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'setParameter', name: 'level', value: 1 },
+			{ kind: 'stopListening' },
+			{ kind: 'settleParameter', name: 'level', value: 0.5 },
+		]);
+	});
+
+	// Backgrounding a quiet room, then the installed iOS app's measured sequence:
+	// `mute` on the track and visibilitychange about nine tenths of a second
+	// behind it. Both are true and both arrive, so the second may not cost a settle
+	// of its own: a ramp restarted halfway is audible as the parameter changing
+	// direction.
+	it('says nothing when the rest changes nothing, and settles once when mute and the page event agree', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, createModulatedScene(), visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		visibility.hide();
+
+		expect(backend.commands.slice(3)).toEqual([
+			{ kind: 'startListening' },
+			{ kind: 'stopListening' },
+		]);
+
+		visibility.show();
+		// The resume leaves a synchronous event handler with nobody holding its
+		// promise, so this waits on the store rather than awaiting a call.
+		await vi.waitFor((): void => {
+			expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+		});
+		backend.emitSignal('loudness', 1);
+		const raised = backend.commands.length;
+
+		backend.emitMute();
+		visibility.hide();
+
+		expect(backend.commands.slice(raised)).toEqual([
+			{ kind: 'stopListening' },
+			{ kind: 'settleParameter', name: 'level', value: 0.5 },
+		]);
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0 });
+	});
+
+	// Stop listening pressed in a loud room (#53). Nobody took the microphone away
+	// here, the listener handed it back, and the reading it left behind is just as
+	// stale either way.
+	it('rests a raised signal when the listener stops listening', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitSignal('loudness', 1);
+		const raised = backend.commands.length;
+
+		const result = runtime.stopListening();
+
+		expect(result).toEqual({ ok: true });
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0 });
+		expect(backend.commands.slice(raised)).toEqual([
+			{ kind: 'stopListening' },
+			{ kind: 'settleParameter', name: 'level', value: 0.5 },
+		]);
+	});
+
+	// Stop listening pressed with the browser's prompt still on screen. The
+	// backend holds the stream from the moment the grant lands, which is before
+	// startListening resolves, so an attempt still reading `opening` can already
+	// have been driving the parameter for a second or two.
+	it('rests a signal that arrived while an accept was still at the prompt', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		let grantMicrophone: () => void = (): void => {};
+		const prompt = new Promise<void>((resolve): void => {
+			grantMicrophone = resolve;
+		});
+		// Through the recorder rather than around it: the wrapper still logs the
+		// command, and the promise the runtime awaits is this test's to settle.
+		const runtime = createSceneRuntime({
+			...backend,
+			startListening: async (): Promise<void> => {
+				await backend.startListening();
+				return prompt;
+			},
+		}, createModulatedScene());
+
+		await runtime.start();
+		const accepting = runtime.startListening();
+		backend.emitSignal('loudness', 1);
+		const raised = backend.commands.length;
+
+		const result = runtime.stopListening();
+
+		expect(result).toEqual({ ok: true });
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0 });
+		expect(backend.commands.slice(raised)).toEqual([
+			{ kind: 'stopListening' },
+			{ kind: 'settleParameter', name: 'level', value: 0.5 },
+		]);
+
+		grantMicrophone();
+
+		expect(await accepting).toEqual({ ok: false, reason: 'stopped-listening' });
+	});
+
+	// The rest of the #53 story, and the part a listener actually notices. Stop
+	// and play again later: the next Bed is built from the store, so a signal left
+	// raised is baked into the new graph at whatever the room was making when they
+	// stopped—with no microphone open to explain it or bring it back down.
+	it('builds the next bed at the rested value rather than the room the listener left', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const runtime = createSceneRuntime(backend, createModulatedScene());
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitSignal('loudness', 1);
+		const raised = backend.commands.length;
+
+		runtime.stop();
+		await runtime.start();
+
+		expect(backend.commands.slice(raised)).toEqual([
+			{ kind: 'stopListening' },
+			{ kind: 'settleParameter', name: 'level', value: 0.5 },
+			{ kind: 'fadeOut', seconds: FADE_OUT_SECONDS },
+			{ kind: 'stop', afterSeconds: FADE_OUT_SECONDS },
+			{ kind: 'resume' },
+			{ kind: 'start', scene: 'silent', parameters: { level: 0.5 } },
+			{ kind: 'fadeIn', seconds: FADE_IN_SECONDS },
+		]);
+	});
+
+	// Coming back from the background. Resting a signal does not switch it off:
+	// the next reading drives the parameter from the value the runtime rested at,
+	// so the Bed follows the room again instead of picking up where the cough that
+	// backgrounded it left off.
+	it('picks live input back up after a resume', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, createModulatedScene(), visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitSignal('loudness', 1);
+		visibility.hide();
+		visibility.show();
+
+		await vi.waitFor((): void => {
+			expect(runtime.store.getState().listening).toEqual({ status: 'listening' });
+		});
+		expect(runtime.store.getState().signals).toEqual({ loudness: 0 });
+		const resumed = backend.commands.length;
+
+		backend.emitSignal('loudness', 1);
+
+		expect(backend.commands.slice(resumed)).toEqual([{ kind: 'setParameter', name: 'level', value: 1 }]);
+		expect(runtime.store.getState().signals).toEqual({ loudness: 1 });
+	});
+
+	// A Scene is free to declare a signal for a parameter it does not have—a Bed
+	// mid-rewrite, a signal kept while the parameter it drove was retired. There
+	// are no bounds to clamp against, which is why effectiveParameters skips it,
+	// and settling a parameter the Scene never declared would ask the Bed to ramp
+	// something that does not exist. The store still rests it: the reading is
+	// stale whether or not anything was listening to it.
+	it('rests a signal that names an undeclared parameter without settling anything', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			{ shimmer: { parameter: 'sparkle', default: 0, reach: 0.5 } },
+		), visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitSignal('shimmer', 1);
+		const raised = backend.commands.length;
+
+		visibility.hide();
+
+		expect(runtime.store.getState().signals).toEqual({ shimmer: 0 });
+		expect(backend.commands.slice(raised)).toEqual([{ kind: 'stopListening' }]);
+	});
+
+	// Two signals on one parameter, which is the case the summing rule exists for.
+	// They combine into one value on the way out, so they come to rest as one
+	// value too: two settles would stack two ramps on the same param and let
+	// whichever landed second win.
+	it('settles a parameter once however many signals drive it', async (): Promise<void> => {
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, createSilentScene(
+			'silent',
+			{ level: { kind: 'number', label: 'Level', min: 0, max: 1, default: 0.5 } },
+			{
+				lift: { parameter: 'level', default: 0, reach: 1 },
+				drop: { parameter: 'level', default: 0, reach: -0.5 },
+			},
+		), visibility);
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitSignal('lift', 1);
+		backend.emitSignal('drop', 1);
+		const raised = backend.commands.length;
+
+		visibility.hide();
+
+		expect(runtime.store.getState().signals).toEqual({ lift: 0, drop: 0 });
+		expect(backend.commands.slice(raised)).toEqual([
+			{ kind: 'stopListening' },
+			{ kind: 'settleParameter', name: 'level', value: 0.5 },
+		]);
+	});
+});

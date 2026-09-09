@@ -25,6 +25,10 @@ export function createSilentScene(
 				stop: () => {},
 				dispose: () => {},
 				setParameter: () => {},
+				// Required, not optional: this file's whole job is to keep the fake
+				// honest against BedHandle, and an optional member would let it drift
+				// silently the next time the interface grows one.
+				settleParameter: () => {},
 			};
 		},
 	};

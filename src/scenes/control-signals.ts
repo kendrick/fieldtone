@@ -13,9 +13,10 @@ export interface ControlSignalDeclaration {
 	// parameter union at the declaration site, which is what turns a typo into a
 	// build failure instead of a signal that silently drives nothing.
 	readonly parameter: string;
-	// Where the signal sits when nothing is driving it, normalized 0..1. ADR 0004
-	// has a Scene ramp its Control Signals back here when input suspends, rather
-	// than letting near-silence drag them somewhere the Bed was never voiced for.
+	// Where the signal sits when nothing is driving it, normalized 0..1. When input
+	// suspends, nothing posts a reading again, so a signal left alone would hold
+	// whatever the room last handed it. ADR 0004 has the runtime rest the signal
+	// here and the Scene voice the settle over a duration the runtime never learns.
 	readonly default: number;
 	// Parameter units a full-scale signal moves the parameter. `reach`, never
 	// `depth`: Listening Depth is a domain term in CONTEXT.md, and a second

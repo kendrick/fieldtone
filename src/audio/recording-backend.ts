@@ -18,6 +18,7 @@ export type BackendCommand
 	= | { kind: 'resume' }
 		| { kind: 'start'; scene: string; parameters: ParameterValues }
 		| { kind: 'setParameter'; name: string; value: number }
+		| { kind: 'settleParameter'; name: string; value: number }
 		| { kind: 'fadeIn'; seconds: number }
 		| { kind: 'fadeOut'; seconds: number }
 		| { kind: 'startListening' }
@@ -155,6 +156,14 @@ export function createRecordingBackend(
 		// throw would be a Scene bug with no listener-facing story to test against.
 		setParameter: (name: string, value: number): void => {
 			recordedCommands.push({ kind: 'setParameter', name, value });
+		},
+		// A kind of its own rather than a flag on setParameter. A settle is a
+		// different event from Listening's point of view—the reset a Control Signal
+		// gets when it goes away, rather than the fast ramp a slider drag
+		// produces—and a separate kind is what keeps the ten existing
+		// `kind: 'setParameter'` assertions in scene-runtime.spec.ts unmoved.
+		settleParameter: (name: string, value: number): void => {
+			recordedCommands.push({ kind: 'settleParameter', name, value });
 		},
 		fadeIn: (seconds: number): void => {
 			recordedCommands.push({ kind: 'fadeIn', seconds });

@@ -43,6 +43,12 @@ export interface AudioBackend {
 	// A no-op when nothing is playing. The runtime keeps the value either way, so
 	// a setting made while idle reaches the graph through the next start.
 	setParameter: (name: string, value: number) => void;
+	// The same value setParameter carries, voiced as a settle. A suspension or a
+	// stop puts every Control Signal back at its Scene's default, and pushing that
+	// through the ramp a slider drag uses would announce the microphone leaving
+	// instead of letting the Bed come to rest. ADR 0004 gives the Scene the ramp,
+	// so neither this call nor setParameter carries a duration.
+	settleParameter: (name: string, value: number) => void;
 	fadeIn: (seconds: number) => void;
 	fadeOut: (seconds: number) => void;
 	// Opens the microphone and runs Level Listening on it, which is what makes
