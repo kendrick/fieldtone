@@ -6,17 +6,19 @@ import { isInstalledApp } from './app-surface';
 // listen-invitation.tsx's OFFERED_KEY carries at lines 19-20.
 export const KEEP_LISTENING_KEY = 'fieldtone.listening.background';
 
-// The choice this session is holding, which outranks storage whenever the two
-// disagree. Storage is persistence across reloads, not the source of truth:
-// `localStorage` can refuse a write with the key already set, because a shared
-// origin ran out of quota or the listener changed a browser setting mid-visit.
+// What this tab is going for, latched on the first read and the only answer
+// after that. Storage is where it comes from and where it goes to survive a
+// reload; once read, it is not consulted again.
 //
-// Turning the setting off is why this matters. A refused disable used to leave
-// `readKeepListening` reporting the old `on`, so Listening went on running in
-// the background over a control the listener had just switched off. Principle I
-// is non-negotiable and no storage failure may keep the microphone open. A
-// refused enable is the safe half of the same trade and works the same way: it
-// holds for this session and is forgotten on reload, rather than not at all.
+// Two failures shaped this. A write localStorage refuses still has to take
+// effect: a refused disable used to leave `readKeepListening` reporting the old
+// `on`, so Listening ran on in the background over a control the listener had
+// just switched off. And a second tab on the same origin must not move this one:
+// the component shows what it read when it mounted, so a tab that kept re-reading
+// storage could suppress its own suspension while its box still said off.
+//
+// Principle I is non-negotiable, and both come to the same rule. A tab may never
+// hold the microphone more freely than its own control has shown.
 let sessionChoice: boolean | undefined;
 
 // DOM-guarded rather than DOM-free, the same reason app-surface.ts guards
@@ -33,15 +35,17 @@ export function readKeepListening(): boolean {
 	}
 
 	try {
-		return window.localStorage.getItem(KEEP_LISTENING_KEY) === 'on';
+		sessionChoice = window.localStorage.getItem(KEEP_LISTENING_KEY) === 'on';
 	}
 	catch {
 		// A browser set to block site data throws on read, same as
-		// listen-invitation's readOffered. Reading that as `false` fails toward
+		// listen-invitation's readOffered. Latching that as `false` fails toward
 		// Principle I: a setting nobody could actually confirm is on must not be
 		// the reason Listening outlives the page in the background.
-		return false;
+		sessionChoice = false;
 	}
+
+	return sessionChoice;
 }
 
 // Drops the session choice so the next read falls back to storage. Test support
@@ -71,16 +75,14 @@ export function writeKeepListening(on: boolean): void {
 	}
 }
 
-// Read per call rather than captured at construction, the same no-cache rule
-// createDocumentVisibility already follows: isHidden fires on a rare event, so
-// the read costs nothing, and nothing here can drift from the control the
-// listener just flipped.
+// Asked on every isHidden() rather than captured when this port was built, the
+// same no-cache rule createDocumentVisibility follows: isHidden fires on a rare
+// event, so the call costs nothing and nothing here can go stale against the
+// control the listener just flipped.
 //
-// What it reads is the session choice wherever the listener has made one, and
-// storage only before that; readKeepListening decides which, and the two part
-// company exactly when a write was refused. So a refused enable holds for this
-// session rather than reading back as off, and a refused disable takes effect
-// rather than leaving the microphone answering to the old value.
+// What comes back is this tab's latched choice, so the answer moves only when
+// the listener moves it here — not when storage refuses a write, and not when
+// another tab on the origin flips its own box.
 //
 // The opt-in is honored only where the platform can honor it. An installed
 // iOS app suspends capture itself the moment it backgrounds (ADR 0004)

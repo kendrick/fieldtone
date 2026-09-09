@@ -75,6 +75,30 @@ describe('readKeepListening / writeKeepListening', (): void => {
 	});
 });
 
+describe('a second tab on the same origin', (): void => {
+	// The component shows what it read when it mounted. A tab that kept re-reading
+	// storage would answer to a box somewhere else: this one would go on showing
+	// off while suppressing its own suspension, holding the microphone open in the
+	// background over a control that said it would not.
+	it('does not move this tab, which would leave its box saying off over a live microphone', (): void => {
+		const shownInTheBox = readKeepListening();
+
+		window.localStorage.setItem(KEEP_LISTENING_KEY, 'on');
+
+		expect(readKeepListening()).toBe(shownInTheBox);
+		expect(keepListeningVisibility(hiddenPort()).isHidden()).toBe(true);
+	});
+
+	// The latch is this tab's, not a refusal to ever read storage: a reload is a
+	// new tab as far as this is concerned, which is what makes the setting stick.
+	it('is read again from storage once the tab starts over', (): void => {
+		window.localStorage.setItem(KEEP_LISTENING_KEY, 'on');
+		forgetKeepListening();
+
+		expect(readKeepListening()).toBe(true);
+	});
+});
+
 describe('a write localStorage refuses', (): void => {
 	function refuseWrites(): void {
 		vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
