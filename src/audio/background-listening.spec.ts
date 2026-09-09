@@ -156,18 +156,30 @@ describe('keepListeningVisibility', (): void => {
 		}
 	});
 
-	it('passes subscribe straight through to the inner port', (): void => {
+	// Asserted through the notification rather than by function identity: the
+	// decorator now hands the inner port a wrapper of its own, so that it can
+	// drop the hide edge the opt-in makes unsafe to answer. What has to hold is
+	// that one subscription reaches the inner port, that a notification from it
+	// reaches the listener, and that the inner port's unsubscribe is what comes
+	// back.
+	it('subscribes to the inner port once and hands its unsubscribe back', (): void => {
 		const unsubscribe = (): void => {};
+		let notifyInner = (): void => {};
 		const inner = {
 			isHidden: (): boolean => false,
-			subscribe: vi.fn(() => unsubscribe),
+			subscribe: vi.fn((onChange: () => void) => {
+				notifyInner = onChange;
+				return unsubscribe;
+			}),
 		};
 		const wrapped = keepListeningVisibility(inner);
-		const listener = (): void => {};
+		const listener = vi.fn();
 
 		const returned = wrapped.subscribe(listener);
+		notifyInner();
 
-		expect(inner.subscribe).toHaveBeenCalledWith(listener);
+		expect(inner.subscribe).toHaveBeenCalledTimes(1);
+		expect(listener).toHaveBeenCalledTimes(1);
 		expect(returned).toBe(unsubscribe);
 	});
 });
@@ -191,6 +203,49 @@ describe('keepListeningVisibility composed into the scene runtime', (): void => 
 
 		expect(backend.commands.slice(settled)).toEqual([]);
 		expect(runtime.store.getState().listening.status).toBe('listening');
+	});
+
+	// The hide edge is swallowed rather than answered while the opt-in applies,
+	// because scene-runtime reads the direction off the port: a hide arriving
+	// while the port reports visible takes the resume branch. Over a suspension
+	// the track's mute caused — an incoming call — that asks for the microphone
+	// again from a hidden page, and getUserMedia parks there instead of
+	// rejecting, stranding the attempt in `opening`.
+	it('does not ask for the microphone again when the page hides over a mute suspension', async (): Promise<void> => {
+		writeKeepListening(true);
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, keepListeningVisibility(visibility));
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitMute();
+		const settled = backend.commands.length;
+
+		visibility.hide();
+
+		expect(backend.commands.slice(settled)).toEqual([]);
+		expect(runtime.store.getState().listening.status).toBe('suspended');
+	});
+
+	// The other half of that asymmetry. A mute suspension outlives the opt-in, so
+	// coming back to the page is when it recovers, exactly as it does for a
+	// listener who never opted in.
+	it('resumes a mute suspension when the listener comes back', async (): Promise<void> => {
+		writeKeepListening(true);
+		const backend = createRecordingBackend();
+		const visibility = createFakeVisibility();
+		const runtime = createSceneRuntime(backend, silentScene, keepListeningVisibility(visibility));
+
+		await runtime.start();
+		await runtime.startListening();
+		backend.emitMute();
+		visibility.hide();
+		const settled = backend.commands.length;
+
+		visibility.show();
+
+		expect(backend.commands.slice(settled)).toEqual([{ kind: 'startListening' }]);
 	});
 
 	it('still suspends on mute with the opt-in on: the platform trigger stays unconditional', async (): Promise<void> => {

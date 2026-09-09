@@ -84,8 +84,33 @@ export function writeKeepListening(on: boolean): void {
 // choice made in the tab must not act inside the installed app: capture there
 // suspends regardless, so isInstalledApp() is the veto.
 export function keepListeningVisibility(inner: PageVisibility): PageVisibility {
+	function applies(): boolean {
+		return readKeepListening() && !isInstalledApp();
+	}
+
 	return {
-		isHidden: (): boolean => !(readKeepListening() && !isInstalledApp()) && inner.isHidden(),
-		subscribe: inner.subscribe,
+		isHidden: (): boolean => !applies() && inner.isHidden(),
+
+		subscribe: (listener: () => void): (() => void) => inner.subscribe((): void => {
+			// The hide edge is swallowed while the opt-in applies rather than passed
+			// through against an `isHidden` that reports visible. scene-runtime's
+			// handler reads the direction off this port instead of the event, so a
+			// hide arriving while the port says visible sends it down the resume
+			// branch: `resumeSuspended` over a suspension the track's own mute
+			// caused, issuing getUserMedia from a hidden page. That call parks
+			// instead of rejecting, and strands the attempt in `opening` with
+			// nothing left to answer it — which is what resumeSuspended's own
+			// comment says only the visible edge may risk.
+			//
+			// The show edge still goes through, and the asymmetry is the point. A
+			// mute suspension is unconditional and outlives the opt-in, so coming
+			// back to the page is exactly when it should recover, the same recovery
+			// a listener who never opted in already gets.
+			if (applies() && inner.isHidden()) {
+				return;
+			}
+
+			listener();
+		}),
 	};
 }
