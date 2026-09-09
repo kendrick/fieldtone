@@ -32,7 +32,7 @@ The runtime holds listener values and signal values apart in the store and combi
 
 A Scene's schema and Control Signal declarations live in Tone-free files beside its Bed, so they can be asserted on under jsdom.
 
-`src/components/parameter-controls.tsx` is the only file that touches `history`. It and `share-control.tsx` are the two that read `window.location`, and share-control reads `href` alone, never `search`, so a link carries every parameter the Scene declares rather than what a bare `/` holds. `listen-invitation.tsx` is the only file that touches `localStorage`.
+`src/components/parameter-controls.tsx` is the only file that touches `history`. It and `share-control.tsx` are the two that read `window.location`, and share-control reads `href` alone, never `search`, so a link carries every parameter the Scene declares rather than what a bare `/` holds. `listen-invitation.tsx` and `src/audio/background-listening.ts` are the two that touch `localStorage`.
 
 `src/app/manifest.ts` is the one file that writes the `/fieldtone` base path by hand, and its comments carry the command that regenerates the icons from `icon.svg`.
 
