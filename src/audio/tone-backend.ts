@@ -404,6 +404,16 @@ export function createToneBackend(): ToneBackend {
 		voice.handle.setParameter(name, value);
 	}
 
+	function settleParameter(name: string, value: number): void {
+		if (voice === undefined) {
+			return;
+		}
+		// stop() clears `voice` before it schedules the dispose, so nothing here can
+		// reach a handle whose nodes are already gone.
+		currentParameters = { ...currentParameters, [name]: value };
+		voice.handle.settleParameter(name, value);
+	}
+
 	function fadeIn(seconds: number): void {
 		if (voice === undefined) {
 			return;
@@ -703,11 +713,13 @@ export function createToneBackend(): ToneBackend {
 		// release goes out first: disconnecting a processor does not end it, and the
 		// Material it holds has to be zeroed by the only thread that can see it.
 		//
-		// The runtime's signals are left wherever they last read. Ramping them back to
-		// their declared defaults when input suspends is a Scene's job under ADR 0004,
-		// not this seam's. The probe's copy below is a different thing and does get
-		// cleared: it exists to show a suite with no ears that a reading arrived, and a
-		// `recognition` left at 1 would show a return that has already ended.
+		// The runtime rests every Control Signal to its Scene's declared default
+		// itself, in restSignals, and pushes the recomputed value down through
+		// settleParameter. Voicing that settle stays a Scene's job under ADR 0004,
+		// so this seam still leaves the values alone here. The probe's copy below is
+		// a different thing and does get cleared: it exists to show a suite with no
+		// ears that a reading arrived, and a `recognition` left at 1 would show a
+		// return that has already ended.
 		// Ahead of the teardown, so an attempt still waiting on the prompt or on the
 		// module fetch sees the bump whichever side of it wakes up first.
 		listeningEpoch += 1;
@@ -768,5 +780,5 @@ export function createToneBackend(): ToneBackend {
 		};
 	}
 
-	return { resume, start, setParameter, fadeIn, fadeOut, startListening, stopListening, stop, onSignal, onMute, probe };
+	return { resume, start, setParameter, settleParameter, fadeIn, fadeOut, startListening, stopListening, stop, onSignal, onMute, probe };
 }

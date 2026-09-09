@@ -155,6 +155,67 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene, visibili
 		return combined;
 	}
 
+	// Input going away puts every Control Signal back where its Scene declared it
+	// rests. Without this a signal holds its last reading for the life of the
+	// session: suspension stops the track and tears the worklet down, so nothing
+	// posts again and the value freezes where it stood. On Ember a quiet room
+	// reads about -59 dBFS and a cough about -35, which is brightness 1.01 against
+	// 1.84. A listener who coughs, switches apps and comes back finds a bright Bed
+	// and no control that explains it.
+	//
+	// The bookkeeping lives here rather than at the seam because ADR 0004 splits
+	// the job in two: the Scene owns how a settle sounds and the runtime owns when
+	// one is due. A backend that decided for itself would have to know every
+	// Scene's signal defaults—the same coupling that keeps Scene graphs out of the
+	// adapter.
+	//
+	// Nothing races a rest on the real backend. `tone-backend.ts` nulls
+	// `port.onmessage` before it stops the track, so there is no reading in flight
+	// to land afterwards and raise a signal the rest just lowered. That is why
+	// `onSignal` below writes the store with no listening-status guard of its own.
+	function restSignals(): void {
+		const defaults = defaultSignalValues(scene.controlSignals);
+		const { signals } = store.getState();
+
+		// Idempotent for the same reason suspend() is: an installed iOS app fires the
+		// track's mute and then visibilitychange about nine tenths of a second behind
+		// it, so a second arrival is the ordinary case and has to cost nothing. A
+		// Scene that declares no Control Signals leaves through here too, which is
+		// why backgrounding one still says nothing at all to the backend.
+		if (Object.entries(defaults).every(([name, value]) => signals[name] === value)) {
+			return;
+		}
+
+		store.setState({ signals: defaults });
+
+		// Same rule the listener's own values follow: held in every playback state,
+		// forwarded only where a graph exists to hear them. The next start reads the
+		// rested values back out of the store.
+		if (store.getState().playback.status !== 'playing') {
+			return;
+		}
+
+		const combined = effectiveParameters();
+		// One settle per parameter rather than one per signal. effectiveParameters
+		// already summed two signals bound to one parameter into a single value, and
+		// settling that parameter twice would start a second ramp over the first.
+		const settled = new Set<string>();
+
+		for (const signal of Object.values(scene.controlSignals)) {
+			const value = combined[signal.parameter];
+
+			// undefined only where the signal names a parameter the Scene never
+			// declared, which effectiveParameters already skipped for the same reason:
+			// there is no declaration to clamp against, so there is nothing to drive.
+			if (value === undefined || settled.has(signal.parameter)) {
+				continue;
+			}
+
+			settled.add(signal.parameter);
+			backend.settleParameter(signal.parameter, value);
+		}
+	}
+
 	async function start(): Promise<StartResult> {
 		const state = store.getState().playback;
 
@@ -358,6 +419,10 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene, visibili
 		if (state.status === 'opening') {
 			backend.stopListening();
 			store.setState({ listening: abandonOpening(state) });
+			// An attempt still at the prompt can already have been driving signals: the
+			// backend holds the stream from the moment the grant lands, which is before
+			// startListening resolves.
+			restSignals();
 			return { ok: true };
 		}
 
@@ -365,6 +430,8 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene, visibili
 		// second stopListening would log a close nobody performed. Still `ok`,
 		// because the press calls off the resume that the next visible edge would
 		// otherwise fire—the listener declining to be asked again.
+		// No rest either: the suspension already rested every signal on its way in,
+		// so the dedupe above would turn this into a no-op.
 		if (state.status === 'suspended') {
 			store.setState({ listening: dismissSuspension(state) });
 			return { ok: true };
@@ -376,6 +443,10 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene, visibili
 
 		backend.stopListening();
 		store.setState({ listening: endListening(state) });
+		// Stop listening in a loud room closes the microphone and leaves the
+		// parameter wherever the room last put it, with nothing left that could ever
+		// bring it down again.
+		restSignals();
 		return { ok: true };
 	}
 
@@ -400,6 +471,7 @@ export function createSceneRuntime(backend: AudioBackend, scene: Scene, visibili
 
 		backend.stopListening();
 		store.setState({ listening: suspendListening(state) });
+		restSignals();
 	}
 
 	// Named `resumeSuspended` because `resume` is already the backend's word for

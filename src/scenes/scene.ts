@@ -29,6 +29,12 @@ export interface BedHandle {
 	// and a Scene that declares a parameter cannot quietly ship without wiring it.
 	// A Scene with no parameters writes a no-op, which costs one line.
 	readonly setParameter: (name: string, value: number) => void;
+	// Separate from setParameter rather than a duration argument on it. ADR 0004
+	// leaves the settle's voicing to the Scene, so the runtime says which parameter
+	// comes back to rest and where rest is, and the Bed decides how long that takes.
+	// A runtime that passed seconds would own a ramp it cannot hear. Required for
+	// the reason setParameter is.
+	readonly settleParameter: (name: string, value: number) => void;
 }
 
 export type BedBuilder = (host: BedHost) => BedHandle;

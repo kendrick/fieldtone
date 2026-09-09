@@ -38,6 +38,13 @@ const OSCILLATORS_PER_VOICE = 3;
 // partway through a drag stays continuous without any bookkeeping here.
 const PARAMETER_RAMP_SECONDS = 0.05;
 
+// How long a Control Signal takes to settle back to its default once Listening
+// suspends or stops. Unmeasured on a device—chosen to sit in family with the
+// backend's FADE_SECONDS/SESSION_FADE_SECONDS of 0.3, long enough that a raised
+// room's brightness reads as the Bed coming to rest rather than as a duck. The
+// listening test is what tunes this number for real.
+const SETTLE_SECONDS = 0.4;
+
 interface DriftingVoice {
 	readonly oscillator: Tone.FatOscillator;
 	readonly lfo: Tone.LFO;
@@ -130,6 +137,26 @@ function buildBed(host: BedHost): BedHandle {
 		lfo.start();
 	}
 
+	// Shared by setParameter's live drag and settleParameter's return-to-default:
+	// the two differ only in how long the ramp takes, never in which node it
+	// targets, so the duration is the one thing each caller supplies.
+	function rampParameter(name: string, value: number, seconds: number): void {
+		switch (name) {
+			case 'space':
+				reverb.wet.rampTo(value, seconds);
+				break;
+			case 'brightness':
+				brightnessScale.factor.rampTo(value, seconds);
+				break;
+			default:
+				// The runtime has already turned away any name this Scene does not
+				// declare, so reaching here means a bug upstream, not bad input. It
+				// still leaves quietly: a throw raised inside a live graph has nowhere
+				// to surface—no caller is waiting on it and the Bed keeps playing
+				// behind it—so it would cost the audio and buy nobody a stack trace.
+		}
+	}
+
 	return {
 		ready: reverb.ready,
 		// Nothing to stop for brightnessScale: a Multiply is not a source, so it
@@ -141,22 +168,8 @@ function buildBed(host: BedHost): BedHandle {
 				lfo.stop(at);
 			}
 		},
-		setParameter: (name, value) => {
-			switch (name) {
-				case 'space':
-					reverb.wet.rampTo(value, PARAMETER_RAMP_SECONDS);
-					break;
-				case 'brightness':
-					brightnessScale.factor.rampTo(value, PARAMETER_RAMP_SECONDS);
-					break;
-				default:
-					// The runtime has already turned away any name this Scene does not
-					// declare, so reaching here means a bug upstream, not bad input. It
-					// still leaves quietly: a throw raised inside a live graph has nowhere
-					// to surface—no caller is waiting on it and the Bed keeps playing
-					// behind it—so it would cost the audio and buy nobody a stack trace.
-			}
-		},
+		setParameter: (name, value) => rampParameter(name, value, PARAMETER_RAMP_SECONDS),
+		settleParameter: (name, value) => rampParameter(name, value, SETTLE_SECONDS),
 		dispose: () => {
 			for (const { oscillator, lfo } of voices) {
 				oscillator.dispose();

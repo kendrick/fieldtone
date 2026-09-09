@@ -92,3 +92,9 @@ All four are `needs-triage` rather than `ready-for-agent`. Listening has no issu
 - The background-Listening opt-in is the first setting whose availability depends on how the app was launched. Whatever reads `navigator.standalone` should live in one place rather than being checked throughout the settings UI, because the next surface-dependent capability will want it too.
 - Whether `videoChat` mode audibly changes Ember's timbre is untested. The spike's probe used two sine waves, which a voice EQ has almost nothing to reshape. Check it with a real Bed when Listening ships.
 - Everything about Listening was established on iOS. Desktop was measured for background playback only, because no desktop browser implements the Audio Session API that the rest of this turns on.
+
+## Correction, 2026-09-09
+
+The ramp section above argues from a muted track. A suspended input keeps delivering audio at the noise floor, so anything derived from it drifts toward whatever silence maps to. #16 shipped a different mechanism. Principle I rules out `enabled = false`, so suspension calls `track.stop()` and the worklet goes down with the track. Nothing posts again, and a Control Signal freezes at its last reading rather than drifting.
+
+The defect is the same size and quieter still. A parameter sits wherever the room happened to leave it at the moment the listener switched apps, and it stays there. Someone coming back to a Bed at some arbitrary brightness has no way to know why. Measured on device while checking #27, a quiet room reads about -59 dBFS and a cough about -35, which at Ember's reach of 1.5 is brightness 1.01 against 1.84. The decision does not change. #18 ramps every Control Signal to its Scene's declared default, on a deliberate Stop listening as well as on backgrounding.
