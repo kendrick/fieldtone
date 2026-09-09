@@ -30,12 +30,17 @@ describe('service worker runtime assets', (): void => {
 		expect(runtimeAssets()).toContain(requested);
 	});
 
-	it('lists what the processor imports beside it', (): void => {
-		// The processor is served as a module and imports its maths from a sibling,
-		// so that file is fetched too and goes stale the same way.
-		const imported = /from '\.\/([^']+)'/.exec(processor)?.[1];
+	it('lists every module the processor imports beside it', (): void => {
+		// The processor is served as a module and imports its maths from siblings,
+		// so each of those files is fetched too and goes stale the same way. matchAll
+		// rather than the first match alone, because a second import added later and
+		// left off this list is exactly the staleness this spec exists to catch.
+		const imported = [...processor.matchAll(/from '\.\/([^']+)'/g)].map(match => match[1]);
 
-		expect(imported).toBeDefined();
-		expect(runtimeAssets().some(asset => asset.endsWith(imported ?? ''))).toBe(true);
+		expect(imported.length).toBeGreaterThan(0);
+
+		for (const specifier of imported) {
+			expect(runtimeAssets().some(asset => asset.endsWith(specifier ?? ''))).toBe(true);
+		}
 	});
 });

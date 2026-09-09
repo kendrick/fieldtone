@@ -5,6 +5,7 @@ import * as Tone from 'tone';
 import { ListeningRejection } from './audio-backend';
 import { needsRecordSession, requestPlaybackSession, requestRecordSession } from './audio-session';
 import { reasonForCaptureError } from './capture-rejection';
+import { powerAt } from './goertzel';
 import { workletModuleUrl } from './worklet-url';
 
 // Every Tone.js call in the app lives here: this is the one AudioBackend that
@@ -84,6 +85,31 @@ interface SignalMessage {
 	readonly value: number;
 }
 
+// The one message that travels the other way, and the only thing that ends a
+// return. A processor whose `process()` returns true is an active source: the
+// spec keeps it running after `disconnect()` and after the main thread drops the
+// node, so a stop that only tore the graph down would leave four seconds of held
+// Material rolling in the audio thread until the context closed. Principle I is
+// non-negotiable, which is why this is a message rather than a nicety.
+const RELEASE_MESSAGE = { name: 'release' };
+
+// What the offline contrast probe injects into `material`, and where it looks
+// for it afterwards. 3 kHz sits far above anything Ember's lowpass passes — its
+// ceiling is 4.8 kHz only at brightness 3, and the Bed's triangle harmonics are
+// long gone by then — so the same frequency measured outside the burst is the
+// Bed's own floor at that frequency, whatever voicing the render happened to
+// draw. That is what makes one render enough: Ember redraws its voicing from an
+// unseeded Math.random, so two renders cannot be compared with each other.
+const MATERIAL_PROBE_HZ = 3000;
+const MATERIAL_PROBE_DB = -12;
+const MATERIAL_PROBE_SECONDS = 1.2;
+const MATERIAL_PROBE_BURST_FROM = 0.8;
+const MATERIAL_PROBE_BURST_TO = 1;
+// Well clear of the 0.3 s fade in, and far enough ahead of the burst that the
+// Reverb's pre-roll cannot bleed backwards into it.
+const MATERIAL_PROBE_CONTROL_FROM = 0.5;
+const MATERIAL_PROBE_CONTROL_TO = 0.7;
+
 interface Voice {
 	handle: BedHandle;
 	envelope: Tone.Gain;
@@ -92,6 +118,18 @@ interface Voice {
 interface Output {
 	master: Tone.Gain;
 	meter: Tone.Meter;
+	// Where Listening hands the Material it returns, and what a Bed reaches for
+	// when it wants to do something with it. Held on Output rather than beside
+	// the microphone nodes because it outlives any one Listening session: a Bed
+	// connects to it once, at build time, and Listening can start and stop under
+	// it any number of times.
+	material: Tone.Gain;
+	// Gain 0, straight to master. Web Audio pulls the graph backwards from the
+	// destination, so a node the master bus cannot reach is never processed at
+	// all — a Bed with no use for `material` would silently stop the worklet
+	// dead, and with it every Control Signal. This keeps the pull alive while
+	// letting nothing untransformed through.
+	materialPull: Tone.Gain;
 }
 
 interface OutputProbe {
@@ -103,6 +141,10 @@ interface OutputProbe {
 	readSignal: (name: string) => number;
 	renderBedRms: (seconds?: number) => Promise<number>;
 	renderBedFingerprint: (seconds?: number) => Promise<number[]>;
+	// How much louder the probe frequency is inside an injected burst than it is
+	// in the Bed alone. A ratio rather than a level, because the Bed's own energy
+	// is the control: nothing here has to know what a given draw sounds like.
+	renderMaterialContrast: () => Promise<number>;
 }
 
 // The runtime never reads `probe`. It hangs off the backend so the adapter's
@@ -124,9 +166,9 @@ declare global {
 // `fadeIn` can be separate commands, and so the offline render can reuse both.
 // The Scene owns everything under the envelope; this file owns only the fade
 // between the Bed and the master bus.
-function createVoice(scene: Scene, parameters: ParameterValues, destination: Tone.InputNode): Voice {
+function createVoice(scene: Scene, parameters: ParameterValues, destination: Tone.InputNode, material: Tone.ToneAudioNode): Voice {
 	const envelope = new Tone.Gain(0).connect(destination);
-	return { handle: scene.bed({ destination: envelope, parameters }), envelope };
+	return { handle: scene.bed({ destination: envelope, parameters, material }), envelope };
 }
 
 function fadeVoiceIn(voice: Voice, seconds: number): void {
@@ -159,10 +201,18 @@ export function readContextTime(): number {
 // impulse renders asynchronously and a graph measured before it exists comes
 // back silent. Two of these must never overlap: Offline swaps the global context
 // around an awaited callback, so callers run them one at a time.
-async function renderBed(scene: Scene, parameters: ParameterValues, seconds: number): Promise<Float32Array> {
+//
+// The Material node is built here rather than handed in, because the live one
+// belongs to a context this render has just swapped out from under itself.
+// `inject` is how a caller puts a signal through it, and the renders that only
+// want the Bed pass nothing, which leaves the node connected but silent — the
+// same thing a listener who never granted the microphone hears.
+async function renderBed(scene: Scene, parameters: ParameterValues, seconds: number, inject?: (material: Tone.Gain) => void): Promise<Float32Array> {
 	const buffer = await Tone.Offline(async (context) => {
-		const voice = createVoice(scene, parameters, context.destination);
+		const material = new Tone.Gain(1);
+		const voice = createVoice(scene, parameters, context.destination, material);
 		await voice.handle.ready;
+		inject?.(material);
 		fadeVoiceIn(voice, FADE_SECONDS);
 	}, seconds);
 	return buffer.getChannelData(0);
@@ -260,12 +310,45 @@ export function createToneBackend(): ToneBackend {
 		return windows;
 	}
 
+	// Proof that a signal put into `material` reaches the listener, rendered
+	// offline so it holds on a machine with no sound card. It measures the same
+	// frequency twice inside one render — once under an injected burst, once
+	// where there is only the Bed — because Ember draws its voicing from an
+	// unseeded Math.random and so no two renders can be compared with each other.
+	// A broken path leaves the two windows equal and the ratio near 1.
+	async function renderMaterialContrast(): Promise<number> {
+		if (current === undefined) {
+			return 0;
+		}
+		const samples = await renderBed(current, currentParameters, MATERIAL_PROBE_SECONDS, (material) => {
+			// Started and stopped against the offline clock, which is the only clock
+			// there is in here. Nothing to dispose: the context and everything in it
+			// goes away with the render.
+			new Tone.Oscillator({ frequency: MATERIAL_PROBE_HZ, type: 'sine', volume: MATERIAL_PROBE_DB })
+				.connect(material)
+				.start(MATERIAL_PROBE_BURST_FROM)
+				.stop(MATERIAL_PROBE_BURST_TO);
+		});
+		// Offline renders at whatever rate the context runs at, and renderBed hands
+		// back samples rather than the buffer, so the rate is read back off the
+		// length instead of being assumed.
+		const sampleRate = samples.length / MATERIAL_PROBE_SECONDS;
+		const frameAt = (seconds: number): number => Math.round(seconds * sampleRate);
+		const burst = powerAt(samples, frameAt(MATERIAL_PROBE_BURST_FROM), frameAt(MATERIAL_PROBE_BURST_TO), MATERIAL_PROBE_HZ, sampleRate);
+		const control = powerAt(samples, frameAt(MATERIAL_PROBE_CONTROL_FROM), frameAt(MATERIAL_PROBE_CONTROL_TO), MATERIAL_PROBE_HZ, sampleRate);
+		// A Bed that happens to render dead silence at the probe frequency would
+		// divide by zero and report Infinity, which reads as a pass for the wrong
+		// reason.
+		return burst / Math.max(control, 1e-12);
+	}
+
 	const probe: OutputProbe = {
 		readContextTime,
 		readOutputLevel,
 		readSignal,
 		renderBedRms,
 		renderBedFingerprint,
+		renderMaterialContrast,
 	};
 
 	function ensureOutput(): Output {
@@ -279,7 +362,10 @@ export function createToneBackend(): ToneBackend {
 		const master = new Tone.Gain(1);
 		master.connect(meter);
 		master.toDestination();
-		output = { master, meter };
+		const material = new Tone.Gain(1);
+		const materialPull = new Tone.Gain(0).connect(master);
+		material.connect(materialPull);
+		output = { master, meter, material, materialPull };
 		window.__fieldtone = probe;
 		return output;
 	}
@@ -304,7 +390,8 @@ export function createToneBackend(): ToneBackend {
 		}
 		current = scene;
 		currentParameters = parameters;
-		voice = createVoice(scene, parameters, ensureOutput().master);
+		const { master, material } = ensureOutput();
+		voice = createVoice(scene, parameters, master, material);
 	}
 
 	function setParameter(name: string, value: number): void {
@@ -563,11 +650,14 @@ export function createToneBackend(): ToneBackend {
 			const input = context.createMediaStreamSource(opened);
 			const listening = context.createAudioWorkletNode(LEVEL_LISTENING_PROCESSOR);
 			input.connect(listening);
-			// The worklet's output is silent, so this connection costs nothing audible. It
-			// is still not optional. Web Audio pulls the graph backwards from the
-			// destination, and a node the master bus cannot reach is never processed, so
-			// an unconnected worklet posts nothing at all.
-			Tone.connect(listening, ensureOutput().master);
+			// Into `material` rather than the master bus, because the worklet's output
+			// is no longer silence: it is the Material it returns, and the Scene decides
+			// what that sounds like. A line straight to master would put the untouched
+			// thing under whatever the Scene made of it. The pull behind `material` is
+			// what keeps the old reason for this connection satisfied — Web Audio
+			// processes only what the destination can reach, so an unconnected worklet
+			// posts nothing at all, Control Signals included.
+			Tone.connect(listening, ensureOutput().material);
 			listening.port.onmessage = (event: MessageEvent<SignalMessage>): void => {
 				const { name, value } = event.data;
 				lastSignalValues.set(name, value);
@@ -605,23 +695,34 @@ export function createToneBackend(): ToneBackend {
 		//
 		// The graph comes down before the tracks do, and the message handler goes with
 		// it. A source node whose tracks have stopped still outputs silence, and a
-		// worklet the master bus is pulling would go on reading that silence and go on
-		// posting it, sliding every parameter a Control Signal drives down to what an
-		// empty room looks like.
+		// worklet still being pulled would go on reading that silence and go on posting
+		// it, sliding every parameter a Control Signal drives down to what an empty
+		// room looks like.
 		//
-		// The signals are left wherever they last read. Ramping them back to their
-		// declared defaults when input suspends is a Scene's job under ADR 0004, not
-		// this seam's.
+		// Tearing the graph down is not enough on its own, though, which is why the
+		// release goes out first: disconnecting a processor does not end it, and the
+		// Material it holds has to be zeroed by the only thread that can see it.
+		//
+		// The runtime's signals are left wherever they last read. Ramping them back to
+		// their declared defaults when input suspends is a Scene's job under ADR 0004,
+		// not this seam's. The probe's copy below is a different thing and does get
+		// cleared: it exists to show a suite with no ears that a reading arrived, and a
+		// `recognition` left at 1 would show a return that has already ended.
 		// Ahead of the teardown, so an attempt still waiting on the prompt or on the
 		// module fetch sees the bump whichever side of it wakes up first.
 		listeningEpoch += 1;
 		listeningInput?.disconnect();
 		if (levelListening !== undefined) {
+			// Ahead of both lines under it: the port is how the message travels, and a
+			// processor that never hears it holds four seconds of Material and keeps
+			// running whatever the main thread does with the node.
+			levelListening.port.postMessage(RELEASE_MESSAGE);
 			levelListening.port.onmessage = null;
 			levelListening.disconnect();
 		}
 		listeningInput = undefined;
 		levelListening = undefined;
+		lastSignalValues.clear();
 		for (const track of stream?.getTracks() ?? []) {
 			// Removed before the stop, so a mute the platform fires while releasing the
 			// track cannot read as the platform taking a microphone the app is already

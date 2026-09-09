@@ -27,6 +27,8 @@ const REVERB_PRE_DELAY_SECONDS = 0.02;
 const FILTER_FLOOR_HZ = 400;
 const FILTER_CEILING_HZ = 1600;
 
+const MATERIAL_LEVEL = 0.5;
+
 const DETUNE_DEPTH_CENTS = 6;
 const OSCILLATORS_PER_VOICE = 3;
 
@@ -78,6 +80,13 @@ function buildBed(host: BedHost): BedHandle {
 	}).connect(host.destination);
 	const gain = new Tone.Gain(BED_LEVEL).connect(reverb);
 	const filter = new Tone.Filter(FILTER_FLOOR_HZ, 'lowpass').connect(gain);
+
+	// Ember is where a returned fragment gets its "changed but still theirs"
+	// character: space defaults to 0.35, so most of what comes back through
+	// this Reverb is dry. MATERIAL_LEVEL is a starting point—the listening
+	// test in a later ticket is what tunes it, not a guess made here.
+	const material = new Tone.Gain(MATERIAL_LEVEL).connect(reverb);
+	host.material.connect(material);
 
 	// The sweep reaches the cutoff through a Multiply rather than landing on
 	// filter.frequency directly, because in Tone a Signal connected to a Param
@@ -157,6 +166,11 @@ function buildBed(host: BedHost): BedHandle {
 			brightnessScale.dispose();
 			filter.dispose();
 			gain.dispose();
+			// host.material is owned by the backend and outlives this Bed, so it has
+			// to be unhooked from our gain before that gain disposes—otherwise the
+			// backend is left holding a connection to a disposed node.
+			host.material.disconnect(material);
+			material.dispose();
 			reverb.dispose();
 		},
 	};
