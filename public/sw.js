@@ -20,7 +20,7 @@ const CHUNKS = /(?:src|href)="([^"]*_next\/static\/[^"]*)"/g;
 //
 // Listed by hand because nothing links them. `tests/unit/service-worker-assets.spec.ts`
 // is what keeps this list in step with what the backend actually loads.
-const RUNTIME_ASSETS = ['worklets/level-listening.js', 'worklets/level-listening-maths.js'];
+const RUNTIME_ASSETS = ['worklets/level-listening.js', 'worklets/level-listening-maths.js', 'worklets/material-maths.js'];
 
 // Shared by install and by every navigation that reaches the network. That sharing
 // is what moves a returning visitor onto a build published since their last visit

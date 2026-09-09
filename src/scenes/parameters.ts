@@ -71,6 +71,16 @@ export function resolveParameterValue(declaration: ParameterDeclaration, value: 
 // Brightness's 2.25-wide range.
 const DEFAULT_STEP = 0.01;
 
+// Measured, not chosen: this is the floor src/scenes/ember/parameters.spec.ts
+// already asserts against Ember, and below it a slider is too coarse for the
+// arrow keys to be worth reaching for.
+const MINIMUM_POSITIONS = 50;
+
+// A judgment rather than a measurement, and ADR 0006 states it as one. It sits
+// roughly where holding an arrow key stops being a way to cross a range. The
+// first Scene with a good reason should widen it.
+const MAXIMUM_POSITIONS = 500;
+
 // Wide enough to absorb float noise. Ember's own four divisions all come out
 // exactly integer, but the division is not reliable in general: a parameter
 // declaring a default of 0.29 on a 0.01 grid divides to 28.999999999999996,
@@ -105,6 +115,29 @@ export function resolveStep(declaration: NumberParameter): number {
 	if (!Number.isFinite(step) || step <= 0) {
 		throw new RangeError(
 			`${declaration.label} declares a step of ${step}, which has to be a finite number greater than zero.`,
+		);
+	}
+
+	// Between the guard above and the grid checks below, and not on either
+	// side of them. Ahead of the guard, a step of 0 would divide to Infinity
+	// and report as out of band rather than the invalid step it is. After the
+	// grid checks, a step that is both off-grid and out of band would report
+	// the grid, and fixing the grid on a step nobody could use would only
+	// surface the band on the next run.
+	//
+	// Rounded for the same reason GRID_TOLERANCE exists a few lines up: this
+	// division is no more reliable than that one. A Space of 0.1 to 0.4 on a
+	// 0.0006 step divides its range exactly 500 ways and comes out
+	// 500.0000000000001, which a bare comparison rejects as over the ceiling.
+	// Rounding rather than a second tolerance constant, because the band is a
+	// count of whole positions: any declaration that survives the grid checks
+	// below has an integer count by construction, and one that does not is
+	// about to be rejected for the grid anyway.
+	const positions = Math.round((declaration.max - declaration.min) / step);
+
+	if (positions < MINIMUM_POSITIONS || positions > MAXIMUM_POSITIONS) {
+		throw new RangeError(
+			`${declaration.label} declares a step of ${step}, which leaves ${positions} positions across its range. A slider needs between ${MINIMUM_POSITIONS} and ${MAXIMUM_POSITIONS}.`,
 		);
 	}
 

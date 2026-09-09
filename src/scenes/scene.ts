@@ -9,6 +9,9 @@ import type { ParameterSchema, ParameterValues } from './parameters';
 export interface BedHost {
 	readonly destination: Tone.InputNode;
 	readonly parameters: ParameterValues;
+	// ToneAudioNode rather than InputNode because the Bed is the consumer:
+	// it calls connect() and disconnect(), which InputNode does not promise.
+	readonly material: Tone.ToneAudioNode;
 }
 
 export interface BedHandle {
